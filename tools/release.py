@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import tempfile
 import threading
@@ -62,6 +63,15 @@ SKILL_FILES = (
     ),
 )
 VERSION_RE = r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+
+
+def python_runtime_license():
+    for directory in (Path(sys.base_prefix), Path(sysconfig.get_path("stdlib"))):
+        for name in ("LICENSE.txt", "LICENSE"):
+            candidate = directory / name
+            if candidate.is_file():
+                return candidate
+    raise ValueError("Python runtime license not found")
 
 
 def versions(root):
@@ -415,11 +425,7 @@ def build(root, out, companion=False, tag=None):
                 # pip records the temporary wheel path; it is not runtime metadata.
                 provenance.unlink()
             shutil.copy2(root / "LICENSE", bundle / "LICENSE")
-            python_license = Path(sys.base_prefix) / "LICENSE.txt"
-            if not python_license.is_file():
-                python_license = Path(sys.base_prefix) / "LICENSE"
-            if not python_license.is_file():
-                raise ValueError("Python runtime license not found")
+            python_license = python_runtime_license()
             shutil.copy2(python_license, bundle / "PYTHON-LICENSE.txt")
             shutil.copy2(root / "packaging/INSTALL.txt", bundle / "INSTALL.txt")
             write_shortcuts(bundle, platform.system())

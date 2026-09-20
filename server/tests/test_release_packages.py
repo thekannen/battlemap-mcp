@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import shutil
+import sysconfig
 import zipfile
 from pathlib import Path
 
@@ -118,3 +119,33 @@ def test_companion_archive_rejects_escaping_link(tmp_path):
         raise
     with pytest.raises(ValueError, match="escape"):
         release.validate_companion_links(bundle)
+
+
+def test_runtime_license_uses_standard_library_on_linux(tmp_path, monkeypatch):
+    release = release_module()
+    prefix = tmp_path / "prefix"
+    stdlib = prefix / "lib" / "python3.12"
+    stdlib.mkdir(parents=True)
+    license_file = stdlib / "LICENSE.txt"
+    license_file.write_text("Python runtime license", encoding="utf-8")
+    monkeypatch.setattr(release.sys, "base_prefix", str(prefix))
+    monkeypatch.setattr(sysconfig, "get_path", lambda name: str(stdlib))
+    assert release.python_runtime_license() == license_file
+
+
+@pytest.mark.parametrize("name", ["LICENSE.txt", "LICENSE"])
+def test_runtime_license_keeps_prefix_layout(tmp_path, monkeypatch, name):
+    release = release_module()
+    license_file = tmp_path / name
+    license_file.write_text("Python license", encoding="utf-8")
+    monkeypatch.setattr(release.sys, "base_prefix", str(tmp_path))
+    monkeypatch.setattr(sysconfig, "get_path", lambda key: str(tmp_path / "missing"))
+    assert release.python_runtime_license() == license_file
+
+
+def test_runtime_license_missing_fails_closed(tmp_path, monkeypatch):
+    release = release_module()
+    monkeypatch.setattr(release.sys, "base_prefix", str(tmp_path))
+    monkeypatch.setattr(sysconfig, "get_path", lambda key: str(tmp_path / "missing"))
+    with pytest.raises(ValueError, match="Python runtime license not found"):
+        release.python_runtime_license()

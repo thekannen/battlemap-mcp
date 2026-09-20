@@ -692,3 +692,12 @@ def test_denied_install_guidance_uses_configured_folder(monkeypatch, tmp_path, c
     error = capsys.readouterr().err
     assert "then rerun install." in error
     assert "--mods-dir" not in error
+
+
+def test_windows_preflight_is_unavailable_on_other_platforms(tmp_path, monkeypatch):
+    import sys
+
+    from battlemap_mcp import preflight
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert preflight._windows_directory_access(tmp_path) == "unknown"

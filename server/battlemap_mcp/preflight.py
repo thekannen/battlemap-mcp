@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import sys
 from pathlib import Path
 
 
@@ -36,6 +37,8 @@ def directory_write_access(destination: Path) -> str:
 
 
 def _windows_directory_access(path: Path) -> str:
+    if sys.platform != "win32":
+        return "unknown"
     from ctypes import wintypes
 
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
