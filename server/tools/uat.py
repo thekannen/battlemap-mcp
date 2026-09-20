@@ -122,15 +122,24 @@ def create(u: Uat) -> None:
 
     u.check("place_object applies scale/rotation/position", place)
 
-    def modulate_roundtrip():
-        r = u.c.request("place_object", asset=obj, x=u.cx + 300, y=u.cy, modulate="#3366ff")
-        e = u.c.request("get_element", id=r["id"])
-        # regression: modulate used to read back as a raw Color "0.2,0.4,1,1"
-        assert e.get("modulate") == "#3366ff", f"modulate {e.get('modulate')!r}"
-        u.c.request("delete_element", id=r["id"])
-        return "sent #3366ff, read back #3366ff"
+    def modulate_refused():
+        before = u.c.request("get_status")
+        for command, params in (
+            ("place_object", {"asset": obj, "modulate": "#3366ff"}),
+            ("place_objects", {"objects": [{"asset": obj}, {"asset": obj, "modulate": "#3366ff"}]}),
+        ):
+            try:
+                u.c.request(command, **params)
+            except BridgeCommandError as exc:
+                assert "modulate" in str(exc) and "saving" in str(exc), str(exc)
+            else:
+                raise AssertionError(f"{command} accepted a nonpersistent tint")
+            after = u.c.request("get_status")
+            assert after["counts"] == before["counts"], "rejected tint changed map counts"
+            assert after["undo_depth"] == before["undo_depth"], "rejected tint changed history"
+        return "single and valid-first batch refused without edits or history"
 
-    u.check("place_object modulate round-trips as hex", modulate_roundtrip)
+    u.check("placement refuses nonpersistent modulate before edits", modulate_refused)
 
     # regression: sorting accepted ANY int; a bad hex fell back to white and
     # still reported modulate_applied
@@ -356,13 +365,20 @@ def modify(u: Uat) -> None:
         return
     made = u.c.request("place_object", asset=obj, x=u.cx - 1500, y=u.cy - 1500)["id"]
 
-    def modulate_reported():
-        r = u.c.request("modify_object", id=made, modulate="#00ff00")
-        # regression: response was snapshotted BEFORE the modulate was applied
-        assert r.get("modulate") == "#00ff00", f"reported {r.get('modulate')!r}"
-        return "response reflects its own write"
+    def modulate_refused():
+        before = u.c.request("get_element", id=made)
+        depth = u.c.request("get_status")["undo_depth"]
+        try:
+            u.c.request("modify_object", id=made, shadow=False, scale=2, modulate="#00ff00")
+        except BridgeCommandError as exc:
+            assert "modulate" in str(exc) and "saving" in str(exc), str(exc)
+        else:
+            raise AssertionError("modify_object accepted a nonpersistent tint")
+        assert u.c.request("get_element", id=made) == before, "refusal partially modified object"
+        assert u.c.request("get_status")["undo_depth"] == depth, "refusal changed history"
+        return "combined shadow/scale/tint request refused without changes"
 
-    u.check("modify_object reports the modulate it applied", modulate_reported)
+    u.check("modify_object refuses nonpersistent modulate before edits", modulate_refused)
 
     # regression: reported success while the object kept its colour
     u.rejects(
@@ -373,12 +389,11 @@ def modify(u: Uat) -> None:
         u.c.request("modify_object", id=made, shadow=False, scale=2.0)
         d = u.c.request("duplicate_object", id=made, dx=200.0)
         e = u.c.request("get_element", id=d["id"])
-        # regression: the copy silently lost modulate and shadow
-        assert e.get("modulate") == "#00ff00", f"modulate {e.get('modulate')!r}"
+        assert e.get("modulate") in (None, "#ffffff"), f"unexpected tint {e.get('modulate')!r}"
         assert e.get("shadow") is False, f"shadow {e.get('shadow')}"
         assert abs(e["scale"] - 2.0) < 0.01, f"scale {e['scale']}"
         u.c.request("delete_element", id=d["id"])
-        return "copy carries modulate, shadow and scale"
+        return "copy retains neutral tint, shadow and scale"
 
     u.check("duplicate_object copies appearance, not just transform", duplicate_fidelity)
 
@@ -405,6 +420,7 @@ def modify(u: Uat) -> None:
 
     def delete_undo():
         before = u.c.request("get_status")["counts"]["objects"]
+        original = u.c.request("get_element", id=made)
         u.c.request("delete_element", id=made)
         time.sleep(0.35)  # removal is deferred to the next frame
         after = u.c.request("get_status")["counts"]["objects"]
@@ -413,6 +429,8 @@ def modify(u: Uat) -> None:
         time.sleep(0.35)
         back = u.c.request("get_status")["counts"]["objects"]
         assert back == before, f"undo did not restore: {back} vs {before}"
+        restored = u.c.request("get_element", id=made)
+        assert restored == original, f"undo changed the restored object: {original} -> {restored}"
         return f"{before} -> {after} -> {back}"
 
     u.check("delete_element is undoable", delete_undo)
@@ -1079,18 +1097,20 @@ def colour(u: Uat) -> None:
 
     u.check("tinted placement leaves the bridge alive", survives_tool_driving)
 
-    def colour_and_modulate():
-        r = u.c.request(
-            "place_object", asset=asset, x=u.cx - 512, y=u.cy, color="#2e6db4", modulate="#808080"
-        )
-        assert r.get("modulate_applied") is True, f"modulate not applied: {r}"
-        e = u.c.request("get_element", id=r["id"])
-        assert e.get("color") == "#2e6db4", f"colour {e.get('color')!r}"
-        assert e.get("modulate") == "#808080", f"modulate {e.get('modulate')!r}"
-        u.c.request("delete_element", id=r["id"])
-        return "baked colour and post-hoc tint coexist"
+    def colour_with_modulate_refused():
+        before = u.c.request("get_status")
+        try:
+            u.c.request("place_object", asset=asset, color="#2e6db4", modulate="#808080")
+        except BridgeCommandError as exc:
+            assert "modulate" in str(exc) and "saving" in str(exc), str(exc)
+        else:
+            raise AssertionError("tinted placement accepted nonpersistent modulate")
+        after = u.c.request("get_status")
+        assert after["counts"] == before["counts"], "refusal placed a colored object"
+        assert after["undo_depth"] == before["undo_depth"], "refusal changed history"
+        return "color plus modulate refused before colored placement"
 
-    u.check("colour and modulate are independent", colour_and_modulate)
+    u.check("colored placement refuses nonpersistent modulate", colour_with_modulate_refused)
 
     # regression: a malformed colour used to fall through to black rather than
     # being refused, silently baking the wrong colour into an unchangeable prop.
@@ -1908,6 +1928,7 @@ def batch(u: Uat) -> None:
             f"4 objects took {after['undo_depth'] - before['undo_depth']} undo steps"
         )
         assert all(on_map(ident) for ident in made), made
+        original = {ident: u.c.request("get_element", id=ident) for ident in made}
 
         undone = u.c.request("undo")
         time.sleep(0.3)
@@ -1918,6 +1939,9 @@ def batch(u: Uat) -> None:
         u.c.request("redo")
         time.sleep(0.3)
         assert all(on_map(ident) for ident in made), "redo did not put the whole batch back"
+        for ident in made:
+            restored = u.c.request("get_element", id=ident)
+            assert restored == original[ident], f"redo changed object {ident}: {restored}"
         u.c.request("delete_elements", ids=made)
         return f"4 placed in 1 call and 1 undo step, ids {made}"
 

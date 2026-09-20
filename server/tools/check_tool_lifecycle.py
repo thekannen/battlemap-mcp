@@ -22,6 +22,7 @@ DELIBERATE = {
     "_add_text": "verified working without Enable",
     "_clear_selection": "only calls DeselectAll",
     "_describe": "read-only GetSelectableType",
+    "_prop_detach_error": "read-only GetSelectableType, same classification as _describe",
     "_movable_group": "read-only GetSelectableType, same classification as _describe",
     "_cave_mesh": "helper; enables for its caller, which disables",
     "_set_wizard_design": (

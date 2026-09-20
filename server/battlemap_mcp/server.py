@@ -84,8 +84,9 @@ ground; paint_material makes an edged patch; dig_cave carves cave floor.
 Terrain, water and floor shapes are layers, not objects: paint over them or
 use invert. They cannot be deleted.
 
-color is applied AT PLACEMENT and cannot be changed later; modulate is a
-multiplicative tint that can. Colourable assets render red until coloured.
+color is applied AT PLACEMENT and cannot be changed later. Nonempty modulate
+is refused because it does not survive saving and reopening. Colourable assets
+render red until coloured.
 
 Use scatter_objects for incidental detail; hand-placed rows read as a grid.
 Establish a focal area, routes and quiet space; vary scale and rotation; run
@@ -1321,12 +1322,10 @@ def place_object(
 
     color: '#rrggbb', Dungeondraft's own colourable-asset colour — the same
       thing the app's colour picker sets. Only assets carrying the colourable
-      attribute respond to it (cave crystals do; a carpet does not). On any
+      attribute respond to it (including colorable carpets and crystals). On any
       other asset it is stored and never renders.
-    modulate: '#rrggbb', Godot's node tint. Works on ANY asset, but MULTIPLIES
-      the texture rather than replacing its colour, so green on a red texture
-      comes out near-black. Use it to darken, warm or wash out an asset, not to
-      recolour one.
+    modulate: retained for compatibility, but nonempty values are refused because
+      Dungeondraft does not preserve this tint when saving and reopening.
 
     layer: which layer the object is drawn on — a VALUE, a multiple of 100 from
       -500 to 900, not a menu index. 100 is the default and where most objects
@@ -1343,6 +1342,11 @@ def place_object(
     require_finite(rotation, "rotation")
     require_hex_color(color, "color")
     require_hex_color(modulate, "modulate")
+    if modulate:
+        raise ValidationError(
+            "modulate is unavailable because Dungeondraft does not preserve it when saving "
+            "and reopening. No changes were made."
+        )
     params = {
         "asset": asset,
         "scale": scale,
@@ -1434,6 +1438,11 @@ def place_objects(objects: list[PlacedObject]) -> dict:
         require_finite(item.rotation, f"{where}.rotation")
         require_hex_color(item.color, f"{where}.color")
         require_hex_color(item.modulate, f"{where}.modulate")
+        if item.modulate:
+            raise ValidationError(
+                f"{where}.modulate is unavailable because Dungeondraft does not preserve it "
+                "when saving and reopening. No changes were made."
+            )
         params: dict = {
             "asset": item.asset,
             "scale": item.scale,
@@ -2945,10 +2954,10 @@ def modify_object(
       it on anything solid enough to stand behind: crates, bookcases, screens,
       a wagon. get_element reports it back.
 
-    modulate: '#rrggbb', a multiplicative tint that works on any asset.
+    modulate: nonempty values are refused because the tint does not survive
+      saving and reopening.
     color is REFUSED: colour is baked at placement and cannot be changed
-    afterwards, here or in Dungeondraft's own UI. Set it in place_object, or
-    use modulate here. See place_object for the distinction.
+    afterwards, here or in Dungeondraft's own UI. Set it in place_object.
 
     layer: move an existing object to a layer VALUE (multiple of 100, -500..900).
     Unlike colour this IS changeable after placement, and it is how a map built
@@ -2956,6 +2965,11 @@ def modify_object(
     """
     require_hex_color(color, "color")
     require_hex_color(modulate, "modulate")
+    if modulate:
+        raise ValidationError(
+            "modulate is unavailable because Dungeondraft does not preserve it when saving "
+            "and reopening. No changes were made."
+        )
     if layer is not None:
         require_choice(layer, list(range(-500, 1000, 100)), "layer")
     params: dict = {"id": id}

@@ -21,3 +21,5 @@ Windows, macOS, and Linux are supported targets. Earlier Linux editor checks ran
 ## Security boundary
 
 The bridge listens on localhost and authenticates message integrity. It does not encrypt traffic or protect against administrators or malicious software running as the same OS user. Your MCP client and model provider may receive map descriptions, paths, and captures; see [privacy](PRIVACY.md).
+
+- **Object tint persistence:** nonempty `modulate` values are refused because this tint does not survive saving and reopening. Use baked `color` at placement for compatible assets.

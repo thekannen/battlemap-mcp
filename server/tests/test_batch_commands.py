@@ -145,3 +145,40 @@ def test_an_unknown_entry_field_is_refused_with_its_name():
     result = asyncio.run(run())
     assert result.is_error
     assert "rotaton" in result.content[0].text
+
+
+@pytest.mark.parametrize("operation", ["place", "batch", "modify"])
+def test_persistent_edits_refuse_modulate_before_any_bridge_call(calls, operation):
+    with pytest.raises(ValidationError, match="modulate.*sav"):
+        if operation == "place":
+            server.place_object(asset="a", color="#3366cc", modulate="#ccddff")
+        elif operation == "batch":
+            server.place_objects([{"asset": "a"}, {"asset": "b", "modulate": "#ccddff"}])
+        else:
+            server.modify_object(id=1, shadow=False, scale=2, modulate="#ccddff")
+    assert calls == []
+
+
+def test_renderer_preflight_precedes_history_and_batch_mutations():
+    import re
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2] / "mod/battlemap-mcp-bridge/scripts/tools/mcp_bridge.gd"
+    ).read_text(encoding="utf-8")
+
+    def body(name):
+        return re.search(r"^func " + name + r"\(.*?(?=^func |\Z)", source, re.M | re.S).group()
+
+    for name, stack in (("_do_undo", "_undo_stack"), ("_do_redo", "_redo_stack")):
+        text = body(name)
+        assert "_prop_detach_history_error" in text
+        assert text.index("_prop_detach_history_error") < text.index(stack + ".pop_back()")
+    for name in ("_delete_element", "_delete_elements"):
+        text = body(name)
+        assert "_prop_detach_error" in text
+        assert text.index("_prop_detach_error") < text.index("_detach_node(")
+    text = body("_delete_elements")
+    assert text.count("for entry in order:") == 2, (
+        "all preflight must finish before any batch detach"
+    )

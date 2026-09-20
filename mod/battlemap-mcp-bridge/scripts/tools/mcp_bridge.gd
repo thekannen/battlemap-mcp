@@ -881,6 +881,7 @@ func _do_undo() -> Dictionary:
 		return _ok({ "undone": false, "reason": "nothing to undo" })
 	var blocked = _wall_merge_history_error(_undo_stack.back(), true)
 	if blocked == "": blocked = _cave_history_error(_undo_stack.back())
+	if blocked == "": blocked = _prop_detach_history_error(_undo_stack.back(), true)
 	if blocked != "": return _err(blocked)
 	var op = _undo_stack.pop_back()
 	_apply_op(op, true)
@@ -892,6 +893,7 @@ func _do_redo() -> Dictionary:
 		return _ok({ "redone": false, "reason": "nothing to redo" })
 	var blocked = _wall_merge_history_error(_redo_stack.back(), false)
 	if blocked == "": blocked = _cave_history_error(_redo_stack.back())
+	if blocked == "": blocked = _prop_detach_history_error(_redo_stack.back(), false)
 	if blocked != "": return _err(blocked)
 	var op = _redo_stack.pop_back()
 	_apply_op(op, false)
@@ -1023,7 +1025,16 @@ func _detach_node(node, id : int):
 			stool.DeselectAll()
 
 	if is_instance_valid(node) and node.get_parent() != null:
+		# Props release their texture on leaving the tree. Keep the resource and
+		# appearance with the detached node so undo/redo can restore them.
+		if node is Node2D and Global.Editor.Tools["SelectTool"].GetSelectableType(node) == 4:
+			if node.has_method("Save") and node.has_method("Load"):
+				node.set_meta("mcp_detached_prop", node.Save(false))
+				node.set_meta("mcp_detached_appearance", _snapshot(node))
+				node.set_meta("mcp_detached_renderers", _prop_renderers(node))
 		node.get_parent().call_deferred("remove_child", node)
+		if node.has_meta("mcp_detached_renderers"):
+			call_deferred("_release_detached_prop_renderers", node)
 	if Global.World.HasNodeID(id):
 		Global.World.RemoveNodeID(id)
 
@@ -1034,12 +1045,80 @@ func _attach_node(node, parent, id : int, refresh : bool = true):
 	# the parent is mid-setup, and the failure is not graceful.
 	if node.get_parent() == null and is_instance_valid(parent):
 		parent.call_deferred("add_child", node)
+		if node.has_meta("mcp_detached_prop"):
+			call_deferred("_restore_detached_prop", node, id)
 
 		if parent.has_method("AddToSearchTable"):
 			parent.call_deferred("AddToSearchTable", node, false)
 	Global.World.SetNodeID(node, id)
 	if refresh and node.has_method("RemakeLines"):
 		node.RemakeLines()
+
+func _prop_detach_error(node) -> String:
+	if not is_instance_valid(node) or not (node is Node2D): return ""
+	if Global.Editor.Tools["SelectTool"].GetSelectableType(node) != 4: return ""
+	if not node.has_method("Save") or not node.has_method("Load"):
+		return "cannot safely detach this object: native save/load is unavailable. No changes were made."
+	var renderers = _prop_renderers(node)
+	if renderers.size() != 2:
+		return "cannot safely identify this object's renderers for undo. No changes were made."
+	for renderer in renderers:
+		if not is_instance_valid(renderer) or not (renderer is Sprite) or renderer.get_parent() != node:
+			return "cannot safely identify this object's renderers for undo. No changes were made."
+	return ""
+
+func _prop_detach_history_error(op, undoing : bool) -> String:
+	var kind = str(op.get("kind", ""))
+	if (kind == "create" and undoing) or (kind == "delete" and not undoing):
+		return _prop_detach_error(op["node"])
+	if (kind == "group" and undoing) or (kind == "delete_many" and not undoing):
+		for entry in op["entries"]:
+			var blocked = _prop_detach_error(entry["node"])
+			if blocked != "": return blocked
+	return ""
+
+func _prop_renderers(node) -> Array:
+	# Prop creates fresh main/shadow sprites on every tree entry, but leaves
+	# the previous pair behind on exit. Identify the private shadow through
+	# its public visibility setter, without relying on child order or names.
+	var main = node.get("Sprite")
+	var before = {}
+	for child in node.get_children():
+		if child is Sprite: before[child] = child.visible
+	var had_shadow = bool(node.get("HasShadow"))
+	node.set("HasShadow", not had_shadow)
+	var changed = []
+	for child in before:
+		if child.visible != before[child]: changed.append(child)
+	node.set("HasShadow", had_shadow)
+	if changed.size() != 1 or changed[0] == main or main == null:
+		return []
+	return [main, changed[0]]
+
+func _release_detached_prop_renderers(node):
+	if not is_instance_valid(node) or node.get_parent() != null: return
+	for renderer in node.get_meta("mcp_detached_renderers"):
+		if is_instance_valid(renderer) and renderer.get_parent() == node:
+			node.remove_child(renderer)
+			renderer.free()
+	node.remove_meta("mcp_detached_renderers")
+
+func _restore_detached_prop(node, id : int):
+	if not is_instance_valid(node) or not node.is_inside_tree():
+		return
+	if not node.has_meta("mcp_detached_prop") or not node.has_method("Load"):
+		return
+	# The native loader restores both the asset reference and baked custom color.
+	node.Load(node.get_meta("mcp_detached_prop"))
+	# Load allocates a fresh registry ID even when restoring an existing node.
+	var loaded_id = _node_id_or(node, -1)
+	if loaded_id != id and Global.World.HasNodeID(loaded_id):
+		Global.World.RemoveNodeID(loaded_id)
+	Global.World.SetNodeID(node, id)
+	node.set_meta("node_id", id)
+	_apply_props(node, node.get_meta("mcp_detached_appearance"))
+	node.remove_meta("mcp_detached_prop")
+	node.remove_meta("mcp_detached_appearance")
 
 func _apply_props(node, snap):
 	if node == null or snap == null:
@@ -3295,6 +3374,8 @@ func _delete_level(req : Dictionary) -> Dictionary:
 		"note": "not undoable through this bridge" })
 
 func _place_object(req : Dictionary) -> Dictionary:
+	var tint_error = _refuse_modulate(req)
+	if tint_error != null: return tint_error
 	var bad_place_object = _bad_sorting(req)
 	if bad_place_object != null: return bad_place_object
 	var bad_place_color = _bad_color(req, ["color", "modulate"])
@@ -3352,6 +3433,9 @@ func _place_objects(req : Dictionary) -> Dictionary:
 		var item = items[i]
 		if typeof(item) != TYPE_DICTIONARY:
 			return _err("objects[%d] must be an object with at least an 'asset'" % i)
+		var tint_error = _refuse_modulate(item)
+		if tint_error != null:
+			return _err("objects[%d]: %s" % [i, tint_error["error"]])
 		var asset = str(item.get("asset", ""))
 		if asset == "":
 			return _err("objects[%d] has no 'asset'" % i)
@@ -4505,6 +4589,8 @@ func _move_elements(req : Dictionary) -> Dictionary:
 		"offset": _vec(offset), "rotation": rad2deg(angle), "pivot": _vec(centre) })
 
 func _modify_object(req : Dictionary) -> Dictionary:
+	var tint_error = _refuse_modulate(req)
+	if tint_error != null: return tint_error
 	var bad_modify_color = _bad_color(req, ["modulate"])
 	if bad_modify_color != null: return bad_modify_color
 	var node = _resolve(req)
@@ -4512,8 +4598,7 @@ func _modify_object(req : Dictionary) -> Dictionary:
 
 	if req.has("color") and str(req.get("color", "")) != "":
 		return _err("colour is baked at placement and cannot be changed after: " +
-			"pass color to place_object when creating the object, or use " +
-			"modulate here for a multiplicative tint that does apply")
+			"pass color to place_object when creating the object")
 
 	if req.has("scale"):
 		var s = float(req["scale"]); node.scale = Vector2(s, s)
@@ -4544,6 +4629,9 @@ func _duplicate_object(req : Dictionary) -> Dictionary:
 	var src = _resolve(req)
 	if src == null: return _err("no element with id " + str(req.get("id")))
 	if src.get("Texture") == null: return _err("element has no Texture to duplicate")
+	var source_tint = _read_node_modulate(src)
+	if source_tint != null and source_tint != Color(1, 1, 1, 1):
+		return _err("cannot duplicate an object with modulate: the tint does not survive saving and reopening. No changes were made.")
 	var prop = _new_object(level, 0, src.z_index)
 	prop.SetTexture(src.Texture)
 	prop.position = src.position + Vector2(float(req.get("dx", 64.0)), float(req.get("dy", 0.0)))
@@ -4586,6 +4674,9 @@ func _delete_elements(req : Dictionary) -> Dictionary:
 			"back with list_elements: an element deleted earlier is already gone, " +
 			"and ids are not reused.") % str(unknown))
 	for entry in order:
+		var blocked = _prop_detach_error(entry["node"])
+		if blocked != "": return _err(blocked)
+	for entry in order:
 		_detach_node(entry["node"], int(entry["id"]))
 	return _ok({ "deleted": order.size(), "ids": seen.keys(), "undoable": true,
 		"note": "one undo() restores all of them" })
@@ -4597,6 +4688,8 @@ func _delete_element(req : Dictionary) -> Dictionary:
 	var node = Global.World.GetNodeByID(id)
 	if node == null:
 		return _err("no element with id %d" % id)
+	var blocked = _prop_detach_error(node)
+	if blocked != "": return _err(blocked)
 	var parent = node.get_parent()
 	_detach_node(node, id)
 	return _ok({ "deleted": true, "id": id, "undoable": true })
@@ -5420,6 +5513,11 @@ func _set_node_color(node, color : Color) -> String:
 		node.SetCustomColor(color)
 		return "SetCustomColor"
 	return ""
+
+func _refuse_modulate(req : Dictionary):
+	if req.has("modulate") and str(req.get("modulate", "")) != "":
+		return _err("modulate is unavailable because Dungeondraft does not preserve it when saving and reopening. No changes were made.")
+	return null
 
 func _modulate_requested(req : Dictionary) -> bool:
 	return _color_requested(req, "modulate")

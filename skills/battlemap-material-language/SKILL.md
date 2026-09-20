@@ -122,8 +122,9 @@ room, and a tint judged on a plain ground shifts once your own lighting is on
 it.
 
 So place the first instance of a family, frame it with the furniture it belongs
-to, and look. Confirm it reads at the size you meant and that any `modulate`
-still holds under the map's ambient. Only then repeat it. Checking costs one
+to, and look. Confirm it reads at the size you meant under the map's ambient.
+Do not request `modulate`: it is refused because it does not survive saving
+and reopening. Choose suitable asset colors or use baked `color` at placement. Only then repeat it. Checking costs one
 screenshot; not checking costs re-placing every instance.
 
 ## Know the footprint before you position it
