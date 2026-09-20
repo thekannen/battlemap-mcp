@@ -1,0 +1,14 @@
+{
+  "name": "battlemap-mcp",
+  "owner": {
+    "name": "thekannen",
+    "url": "https://github.com/thekannen/battlemap-mcp"
+  },
+  "plugins": [
+    {
+      "name": "battlemap-mcp",
+      "source": "./",
+      "description": "Drive a running Dungeondraft instance over a localhost bridge: walls, floors, terrain, lighting and props, plus skills for art direction, composition and structural review. Requires Dungeondraft with the bundled bridge mod installed."
+    }
+  ]
+}

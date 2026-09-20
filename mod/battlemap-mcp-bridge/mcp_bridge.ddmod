@@ -1,0 +1,9 @@
+{
+	"name": "Battlemap MCP Bridge",
+	"unique_id": "Knownframe.MCPBridge",
+	"version": "0.2.0",
+	"author": "Knownframe",
+	"description": "Exposes a localhost TCP/JSON bridge so an external MCP server can drive the open map.",
+	"dd_version": "1.2.0.1",
+	"dependencies": []
+}

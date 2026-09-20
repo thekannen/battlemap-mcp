@@ -1,0 +1,26 @@
+{
+  "active_tool": null,
+  "counts": {
+    "lights": 1,
+    "objects": 3,
+    "paths": 1,
+    "portals": 0,
+    "roofs": 0,
+    "texts": 0,
+    "walls": 1
+  },
+  "level_count": 1,
+  "level_id": 0,
+  "map_center": [
+    4480,
+    2560
+  ],
+  "map_open": true,
+  "map_size_woxels": [
+    8960,
+    5120
+  ],
+  "max_undo": 40,
+  "redo_depth": 0,
+  "undo_depth": 8
+}

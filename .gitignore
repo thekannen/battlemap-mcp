@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
+.mcp.json
+mono_crash*.json
+mod/battlemap-mcp-bridge/icons/mcp_bridge.png

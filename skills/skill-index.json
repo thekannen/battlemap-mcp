@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "skills": [
+    {
+      "name": "battlemap-art-direction",
+      "path": "skills/battlemap-art-direction/SKILL.md",
+      "triggers": ["map brief", "art direction", "battle map composition"],
+      "requires": [
+        "battlemap-environments",
+        "battlemap-interiors",
+        "battlemap-material-language",
+        "battlemap-lighting-hierarchy",
+        "battlemap-composition-audit",
+        "battlemap-visual-review"
+      ],
+      "minimum_protocol": 23
+    },
+    {
+      "name": "battlemap-environments",
+      "path": "skills/battlemap-environments/SKILL.md",
+      "triggers": ["forest map", "outdoor battle map", "wilderness scene"],
+      "requires": ["battlemap-visual-review"],
+      "minimum_protocol": 23
+    },
+    {
+      "name": "battlemap-interiors",
+      "path": "skills/battlemap-interiors/SKILL.md",
+      "triggers": ["tavern map", "dungeon room", "interior battle map"],
+      "requires": ["battlemap-visual-review"],
+      "minimum_protocol": 23
+    },
+    {
+      "name": "battlemap-material-language",
+      "path": "skills/battlemap-material-language/SKILL.md",
+      "triggers": ["cohesive materials", "visual motif", "asset collage", "detail hierarchy"],
+      "requires": ["battlemap-composition-audit"],
+      "minimum_protocol": 23
+    },
+    {
+      "name": "battlemap-lighting-hierarchy",
+      "path": "skills/battlemap-lighting-hierarchy/SKILL.md",
+      "triggers": ["map lighting", "atmospheric darkness", "focal illumination", "light hierarchy"],
+      "requires": ["battlemap-material-language", "battlemap-composition-audit"],
+      "minimum_protocol": 23
+    },
+    {
+      "name": "battlemap-composition-audit",
+      "path": "skills/battlemap-composition-audit/SKILL.md",
+      "triggers": ["composition audit", "map hierarchy", "final polish"],
+      "requires": ["battlemap-visual-review"],
+      "minimum_protocol": 23
+    },
+    {
+      "name": "battlemap-visual-review",
+      "path": "skills/battlemap-visual-review/SKILL.md",
+      "triggers": ["map review", "screenshot critique", "finish map"],
+      "requires": [],
+      "minimum_protocol": 22
+    }
+  ]
+}

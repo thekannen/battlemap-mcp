@@ -1,0 +1,11 @@
+{
+  "asset": "res://textures/objects/activities/administration/atlas_globe_01.png",
+  "id": 6,
+  "kind": "object",
+  "position": [
+    4560,
+    2640
+  ],
+  "rotation": 45.000001,
+  "scale": 1.5
+}

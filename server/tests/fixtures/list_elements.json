@@ -1,0 +1,49 @@
+{
+  "count": 4,
+  "elements": [
+    {
+      "asset": "res://textures/objects/activities/administration/atlas_globe_01.png",
+      "id": 0,
+      "kind": "object",
+      "position": [
+        4560,
+        2640
+      ],
+      "rotation": 45.000001,
+      "scale": 1.5
+    },
+    {
+      "asset": "res://textures/objects/activities/administration/atlas_globe_01.png",
+      "id": 4,
+      "kind": "object",
+      "position": [
+        4680,
+        2640
+      ],
+      "rotation": 45.000001,
+      "scale": 1.5
+    },
+    {
+      "id": 5,
+      "kind": "object",
+      "position": [
+        4280,
+        2560
+      ],
+      "rotation": 0,
+      "scale": 1
+    },
+    {
+      "asset": "res://textures/objects/activities/administration/atlas_globe_01.png",
+      "id": 6,
+      "kind": "object",
+      "position": [
+        4480,
+        2560
+      ],
+      "rotation": 0,
+      "scale": 1
+    }
+  ],
+  "kind": "objects"
+}
