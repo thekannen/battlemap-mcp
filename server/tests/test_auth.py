@@ -232,16 +232,18 @@ def test_a_handshake_rejection_refreshes_a_changed_file_token_once(
     assert len(fake_bridge.received) == 1
 
 
-def test_a_handshake_rejection_with_an_unchanged_file_token_is_not_retried(
-    tmp_path, monkeypatch, fake_bridge
+@pytest.mark.parametrize("explicit_port", [True, False])
+def test_a_handshake_rejection_with_unchanged_local_settings_is_not_retried(
+    tmp_path, monkeypatch, fake_bridge, explicit_port
 ):
     token_file = tmp_path / "mcp_bridge_token"
     token_file.write_text("t" * 40, encoding="utf-8")
     monkeypatch.setenv("BATTLEMAP_MCP_TOKEN_FILE", str(token_file))
+    monkeypatch.setattr(bridge_client, "_resolve_port", lambda: fake_bridge.port)
     fake_bridge.mode = "impostor"
 
     with pytest.raises(BridgePeerUntrustedError):
-        BridgeClient(port=fake_bridge.port).request("ping")
+        BridgeClient(port=fake_bridge.port if explicit_port else None).request("ping")
     assert len(fake_bridge.handshakes) == 1
 
 
@@ -266,6 +268,27 @@ def test_a_response_authentication_failure_is_not_retried_after_token_rotation(
     with pytest.raises(BridgePeerUntrustedError, match="response authentication failed"):
         BridgeClient(port=fake_bridge.port).request("synthetic_mutation")
     assert len(fake_bridge.received) == 1
+
+
+def test_changed_port_recovers_from_another_bridge_without_sending_it_commands(
+    monkeypatch, fake_bridge
+):
+    from tests.conftest import FakeBridge
+
+    other = FakeBridge()
+    other.token = "another-instance"
+    try:
+        monkeypatch.setattr(bridge_client, "_resolve_port", lambda: other.port)
+        client = BridgeClient(token=fake_bridge.token)
+        assert client.port == other.port
+        monkeypatch.setattr(bridge_client, "_resolve_port", lambda: fake_bridge.port)
+
+        assert client.request("synthetic_mutation") == {}
+        assert len(other.handshakes) == 1
+        assert other.received == []
+        assert len(fake_bridge.received) == 1
+    finally:
+        other.close()
 
 
 def test_other_command_errors_are_not_retried(tmp_path, monkeypatch, fake_bridge):

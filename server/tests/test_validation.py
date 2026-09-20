@@ -226,7 +226,7 @@ def test_draw_wall_rejects_malformed_points_before_the_socket(monkeypatch):
 
 def test_validate_floorplan_refuses_an_unbounded_cell_count(monkeypatch):
     """cell_woxels=1 on an ordinary map is tens of millions of flood-fill
-    entries — not a slow answer but an unbounded one."""
+    entries â€” not a slow answer but an unbounded one."""
     from battlemap_mcp import server
 
     monkeypatch.setattr(
@@ -237,3 +237,12 @@ def test_validate_floorplan_refuses_an_unbounded_cell_count(monkeypatch):
     with pytest.raises(ValidationError) as excinfo:
         server.validate_floorplan(cell_woxels=1)
     assert "cells" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("z", [-501, -150, 1000])
+def test_pattern_rejects_layers_that_cannot_persist(z, monkeypatch):
+    monkeypatch.setattr(
+        server.bridge, "request", lambda *a, **kw: pytest.fail("invalid layer dispatched")
+    )
+    with pytest.raises(ValidationError, match="z"):
+        server.place_pattern(asset="floor.png", category="Simple Tiles", rect=[0, 0, 256, 256], z=z)

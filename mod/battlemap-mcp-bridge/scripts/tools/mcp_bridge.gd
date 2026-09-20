@@ -3667,6 +3667,17 @@ func _add_roof(req : Dictionary) -> Dictionary:
 	roof.SetTileTexture(tex)
 	return _ok({ "id": _id(roof), "ridge_points": pts.size() })
 
+func _pattern_draw_layer(node) -> int:
+	var draw_layer := 0
+	var current = node
+	while current != null:
+		if current is Node2D:
+			draw_layer += current.z_index
+			if not current.z_as_relative:
+				break
+		current = current.get_parent()
+	return draw_layer
+
 func _place_pattern(req : Dictionary) -> Dictionary:
 	var bad_pattern_color = _bad_color(req, ["color"])
 	if bad_pattern_color != null: return bad_pattern_color
@@ -3683,6 +3694,24 @@ func _place_pattern(req : Dictionary) -> Dictionary:
 	var tex = _asset_tex(category, req.get("asset", ""))
 	if tex == null: return _err("could not load pattern asset: " + str(req.get("asset")))
 
+	var want_layer = int(req.get("z", -100))
+	if want_layer < LAYER_MIN or want_layer > LAYER_MAX or want_layer % LAYER_STEP != 0:
+		return _err("'z' must be a persistent layer value: -500..900 in steps of 100")
+	# Validate geometry before changing tool state.
+	if req.has("rect"):
+		if typeof(req["rect"]) != TYPE_ARRAY or req["rect"].size() < 4:
+			return _err("'rect' must be [x, y, w, h]")
+	elif req.has("points"):
+		if _points(req["points"]).size() < 3:
+			return _err("'points' needs >= 3 [x,y] pairs for a polygon")
+	else:
+		return _err("provide 'rect':[x,y,w,h] or 'points':[[x,y]...]")
+	var prior_layer = _get_tool_layer({ "tool": "PatternShapeTool" })
+	if not prior_layer.get("ok", false): return prior_layer
+	var layer_change = _set_tool_layer({ "tool": "PatternShapeTool", "layer": want_layer })
+	if not layer_change.get("ok", false): return layer_change
+	if not layer_change["result"].get("applied", false):
+		return _err("PatternShapeTool did not accept the requested persistent layer")
 	var shapes = level.PatternShapes
 	var tool = Global.Editor.Tools["PatternShapeTool"]
 	tool.Texture = tex
@@ -3701,7 +3730,9 @@ func _place_pattern(req : Dictionary) -> Dictionary:
 	if tool.get("Rotation") != null:
 		tool.Rotation.value = rotation
 
-	var before := shapes.GetShapes().size()
+	var existing_shapes := {}
+	for existing_shape in shapes.GetShapes():
+		existing_shapes[existing_shape.get_instance_id()] = true
 	var kind : String
 	if req.has("rect"):
 		var r = req["rect"]
@@ -3726,14 +3757,19 @@ func _place_pattern(req : Dictionary) -> Dictionary:
 		# Signal we applied the neutral default (no per-texture tint exists for
 		# patterns; pass an explicit `color` for an exact look).
 		result["used_default_tint"] = true
-	if all.size() > before and all.size() > 0:
-		var shape = all[all.size() - 1]
+	# Enumeration is grouped by layer; the new shape need not be last.
+	for shape in all:
+		if existing_shapes.has(shape.get_instance_id()):
+			continue
 		if shape.has_method("SetOptions"):
 			shape.SetOptions(tex, color, rotation)
-		shape.z_as_relative = false
-		shape.z_index = int(req.get("z", -100))
+		shape.z_as_relative = true
+		shape.z_index = 0
 		result["id"] = _id(shape)
-		result["z_index"] = shape.z_index
+		result["z_index"] = _pattern_draw_layer(shape)
+	var restored = _set_tool_layer({ "tool": "PatternShapeTool", "layer": prior_layer["result"]["layer"] })
+	if not restored.get("ok", false) or not restored.get("result", {}).get("applied", false):
+		result["warning"] = "Pattern created, but the previous tool layer could not be restored"
 	return _ok(result)
 
 func _scatter_objects(req : Dictionary) -> Dictionary:
@@ -5130,7 +5166,7 @@ func _describe(node, want_points : bool = true) -> Dictionary:
 		d["rotation"] = rad2deg(node.rotation)
 		d["scale"] = node.scale.x
 
-		d["layer"] = node.z_index
+		d["layer"] = _pattern_draw_layer(node) if d.get("kind") == "pattern" else node.z_index
 	var tex = _texture_of(node, t)
 	if tex != null:
 		d["asset"] = tex.resource_path

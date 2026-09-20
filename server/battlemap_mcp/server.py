@@ -1705,14 +1705,15 @@ def place_pattern(
     color: '#rrggbb' tint. Omit to use the tileset's own default tint (wood is
       brown, etc.) instead of white — match the UI by leaving it unset.
     rotation: pattern rotation in degrees.
-    z: absolute z_index. Default -100 sits below objects (z 0) and above terrain
-      shapes (z -200). Raise toward 0+ to overlay on top.
+    z: persistent layer VALUE, a multiple of 100 from -500 to 900.
+      Default -100 sits below objects. Arbitrary z offsets cannot survive saving.
     """
     if points is not None:
         require_points(points, minimum=3)
     if rect is not None:
         require_rect(rect)
     require_one_of(rect=rect, points=points)
+    require_choice(z, list(range(-500, 901, 100)), "z")
     require_hex_color(color, "color")
     reject_smart_tiles(category)
     params: dict = {"asset": asset, "category": category, "z": z}

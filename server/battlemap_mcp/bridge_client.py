@@ -128,7 +128,7 @@ class BridgeClient:
         return self._explicit_token if self._explicit_token is not None else _resolve_token()
 
     def request(self, cmd: str, **params: Any) -> dict:
-        """Send one command. Retries once after a confirmed token rotation.
+        """Send one command; safely refresh changed local connection settings.
 
         The token is cached for the client's lifetime, and the MCP server holds
         one client for the life of the process — so if Dungeondraft ever writes
@@ -145,10 +145,14 @@ class BridgeClient:
             self.__dict__.pop("token", None)  # drop the cached_property value
             return self._request(cmd, **params)
         except BridgeHandshakeUntrustedError:
-            if self._explicit_token is not None:
-                raise
-            previous_token = self.__dict__.pop("token", None)
-            if previous_token is None or self.token == previous_token:
+            changed = False
+            if self._explicit_port is None:
+                previous_port = self.__dict__.pop("port", None)
+                changed = previous_port is not None and self.port != previous_port
+            if self._explicit_token is None:
+                previous_token = self.__dict__.pop("token", None)
+                changed = (previous_token is not None and self.token != previous_token) or changed
+            if not changed:
                 raise
             return self._request(cmd, **params)
         except BridgeUnavailableError as exc:
