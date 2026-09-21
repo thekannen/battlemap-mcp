@@ -31,10 +31,21 @@ there are expected, not a defect.
    at. If you have never chosen one, create **Dungeondraft Mods** in your home
    folder and select it in step 3.
 
-   **Replacing an older bridge:** save your map, fully quit Dungeondraft, and
-   delete the old bridge folder before copying the new one in. Every version
-   ships the same mod id, so two bridge folders in one mods folder is an
-   unsupported state and the editor may load either of them.
+   **Replacing an older bridge:** save your map and fully quit Dungeondraft
+   first. Then move the old bridge folder out of the mods folder — anywhere
+   outside it will do, and moving it aside is safer than deleting if you may
+   want it back. Copy the new one in afterwards. Every version ships the same
+   mod id, so two bridge folders in one mods folder is an unsupported state and
+   the editor may load either of them.
+
+   The old bridge may be a **symbolic link** rather than a real folder, which
+   is normal if it was installed from a source checkout. Move or remove the
+   link itself; the checkout it points at is not affected. Take out only the
+   bridge entry, not the whole mods folder, if anything else lives there.
+
+   Quarantine on the extracted mod files is harmless and needs no action.
+   Dungeondraft reads them; the shell never executes them, so the block that
+   affects the companion does not apply here.
 
 3. In Dungeondraft choose **Mods → Browse**, select the folder that *contains*
    the bridge folder, tick **Battlemap MCP Bridge**, and click **Accept**.
@@ -71,6 +82,13 @@ there are expected, not a defect.
    That marks one folder as something you decided to trust. It does not turn
    off Gatekeeper and changes nothing else on your Mac. If you would rather
    not, stop here and say so.
+
+   **If an AI assistant is doing the install for you**, it may be refused at
+   this point: agents commonly run behind a permission layer that blocks
+   clearing quarantine, and sometimes blocks launching an unsigned binary even
+   after it is cleared. That is the agent's sandbox, not macOS and not this
+   package. Run the command yourself in Terminal and let the assistant carry
+   on, or use a signed build, where none of this arises.
 
 7. Open **Check connection.command** with a map open in Dungeondraft. Expect
    **Ready: connected to MCP Bridge**. Fully quit and reopen your AI client.
