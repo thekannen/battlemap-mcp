@@ -85,7 +85,7 @@ Skip the **Source code** downloads. You do not need them.
 4. Tick **Battlemap MCP Bridge**, click **Accept**, then create or open a map. Wait for it
    to finish loading. The bridge does not run on the start screen.
 
-If you are replacing an older bridge, save your map and quit Dungeondraft first. Keep only one MCP Bridge in your active mods folders. Other mods can stay where they are.
+If you are replacing an older bridge, save your map and fully quit Dungeondraft first, then delete the old bridge folder before copying in the new one. This applies on every platform. Keep only one MCP Bridge in your active mods folders: every version ships the same mod id, so two bridge folders is an unsupported state and the editor may load either one. Other mods can stay where they are.
 
 ### 3. Connect your AI app
 
@@ -125,7 +125,8 @@ The checker confirms the mod connection; this first prompt confirms your AI app 
 | “Not connected yet” | Enable MCP Bridge, open a map, wait for loading, and close any Dungeondraft dialogs. Run the checker again. |
 | The checker reports an older/different bridge | Use both downloads from the same release, remove duplicate bridge copies, and fully quit and reopen Dungeondraft. |
 | The checker is ready, but the AI app cannot see Dungeondraft | Run the matching Connect file, finish any instructions it shows, then fully quit and reopen your AI app. |
-| Windows blocks the download | These builds are unsigned. Stop and report the warning to the maintainer; do not disable Windows security. |
+| Windows blocks the download | Windows builds are unsigned by choice. Report the warning to the maintainer; do not disable Windows security. |
+| macOS blocks the companion | Only happens on an unsigned build, and is not a crash. From Finder you get a "developer cannot be verified" dialog; from Terminal you get only `Killed: 9` and exit code 137, with no message. See [macOS install](docs/install-packages.md#macos), step 6. |
 
 [Update, move, or uninstall](docs/install-packages.md#update-or-remove).
 

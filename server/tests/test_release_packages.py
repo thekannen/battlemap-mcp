@@ -149,3 +149,80 @@ def test_runtime_license_missing_fails_closed(tmp_path, monkeypatch):
     monkeypatch.setattr(sysconfig, "get_path", lambda key: str(tmp_path / "missing"))
     with pytest.raises(ValueError, match="Python runtime license not found"):
         release.python_runtime_license()
+
+
+def test_local_artifacts_do_not_block_packaging(checkout, tmp_path):
+    """Shell metadata and the runtime mod icon are gitignored, not payload.
+
+    Both used to raise "Unexpected payload file", so a macOS checkout whose
+    mod/ folder had been opened in Finder could not build a release at all --
+    and the resulting error masked the symlink assertion above.
+    """
+    release = release_module()
+    base = checkout / "mod/battlemap-mcp-bridge"
+    (base / ".DS_Store").write_bytes(b"\x00\x01")
+    (base / "scripts/.DS_Store").write_bytes(b"\x00\x01")
+    (base / "icons").mkdir(parents=True, exist_ok=True)
+    (base / "icons/mcp_bridge.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    archive = release.build_mod(checkout, tmp_path / "out", "0.2.0")
+    with zipfile.ZipFile(archive) as zipped:
+        names = set(zipped.namelist())
+    assert names == {
+        "battlemap-mcp-bridge/mcp_bridge.ddmod",
+        "battlemap-mcp-bridge/scripts/tools/mcp_bridge.gd",
+        "battlemap-mcp-bridge/LICENSE",
+    }
+
+
+def test_stray_file_still_rejected_alongside_artifacts(checkout, tmp_path):
+    """Tolerating known artifacts must not weaken the allowlist itself."""
+    release = release_module()
+    base = checkout / "mod/battlemap-mcp-bridge"
+    (base / ".DS_Store").write_bytes(b"\x00\x01")
+    (base / "private.log").write_text("secret")
+    with pytest.raises(ValueError, match="Unexpected"):
+        release.build_mod(checkout, tmp_path / "out", "0.2.0")
+
+
+def test_signing_flags_must_be_paired(checkout, tmp_path):
+    """Half a signing configuration fails before the build, not after it.
+
+    Notarizing an unsigned bundle is accepted and then comes back Invalid, so
+    the useful failure is an immediate one. Discovering it after a multi-minute
+    build is how people learn to skip signing.
+    """
+    release = release_module()
+    for kwargs in (
+        {"sign_identity": "Developer ID Application: X"},
+        {"notary_profile": "some-profile"},
+    ):
+        with pytest.raises(ValueError, match="pass both"):
+            release.build(checkout, tmp_path / "out", companion=True, **kwargs)
+
+
+def test_signing_is_refused_off_macos(checkout, tmp_path, monkeypatch):
+    """Windows and Linux are deliberately unsigned; asking is an error."""
+    release = release_module()
+    monkeypatch.setattr(release.platform, "system", lambda: "Windows")
+    with pytest.raises(ValueError, match="macOS-only"):
+        release.build(
+            checkout,
+            tmp_path / "out",
+            companion=True,
+            sign_identity="Developer ID Application: X",
+            notary_profile="some-profile",
+        )
+
+
+def test_is_macho_detects_real_binaries(tmp_path):
+    """The signer walks the bundle by magic number, not by file extension."""
+    release = release_module()
+    macho = tmp_path / "binary"
+    macho.write_bytes(b"\xcf\xfa\xed\xfe" + b"\x00" * 32)
+    plain = tmp_path / "notes.txt"
+    plain.write_text("not a binary")
+    missing = tmp_path / "gone"
+    assert release.is_macho(macho) is True
+    assert release.is_macho(plain) is False
+    assert release.is_macho(missing) is False

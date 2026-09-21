@@ -6,26 +6,73 @@ client help, and updates.
 
 ## macOS
 
-These are private, unsigned candidate packages. Final clean installation and
-live acceptance remain pending for the renamed Windows, macOS, and Linux
-artifacts. Windows signing and macOS signing/notarization are required before
-public binary distribution; the current workflow does not implement them.
+Private candidate packages. **If your download is signed and notarized, skip
+step 6** — it just runs. An unsigned build is blocked by macOS the first time,
+and step 6 says what that looks like. Verified on Apple Silicon.
+
+Windows builds are unsigned by choice and stay that way; SmartScreen warnings
+there are expected, not a defect.
 
 1. From the same [release](https://github.com/thekannen/battlemap-mcp/releases),
    download `battlemap-mcp-mod-<version>.zip` and your Mac companion:
    `macos-arm64.tar.gz` for Apple Silicon, or `macos-x64.tar.gz` for Intel.
-   **Apple menu → About This Mac** shows your chip. Skip Source code archives.
-2. Extract the mod ZIP. Move `battlemap-mcp-bridge` into your usual mods folder.
-   If you need a new one, create **Dungeondraft Mods** in your home folder.
-3. In Dungeondraft choose **Mods → Browse**, select the folder containing the
-   bridge folder, tick **Battlemap MCP Bridge**, and click **Accept**. Create or open a map.
-4. Extract the companion archive and move the whole `battlemap-mcp` folder
-   to a permanent location in your home folder. Keep `_internal` and all other
-   files with the executable.
-5. Open **Connect Codex.command** or **Connect Claude Code.command**. These files
-   install bundled skills and register the companion with the selected client.
-   If macOS blocks a file, stop and report the warning; do not disable protections.
-6. Open **Check connection.command** with a map open in Dungeondraft. Expect
+   **Apple menu → About This Mac** shows your chip; in Terminal, `uname -m`
+   prints `arm64` or `x86_64`. Skip the Source code archives.
+
+   The release also carries `SHA256SUMS` and a `.whl`. **You do not need the
+   `.whl`** — it is for running from Python packaging instead of the companion,
+   and is covered in [developer installation](developer-installation.md). To
+   check your downloads, run `shasum -a 256 -c SHA256SUMS` in the download
+   folder; every listed file should say `OK`.
+
+2. **Extract the mod ZIP** — double-click it in Finder, or run
+   `unzip battlemap-mcp-mod-<version>.zip` in Terminal. Move the
+   `battlemap-mcp-bridge` folder into the mods folder Dungeondraft is pointed
+   at. If you have never chosen one, create **Dungeondraft Mods** in your home
+   folder and select it in step 3.
+
+   **Replacing an older bridge:** save your map, fully quit Dungeondraft, and
+   delete the old bridge folder before copying the new one in. Every version
+   ships the same mod id, so two bridge folders in one mods folder is an
+   unsupported state and the editor may load either of them.
+
+3. In Dungeondraft choose **Mods → Browse**, select the folder that *contains*
+   the bridge folder, tick **Battlemap MCP Bridge**, and click **Accept**.
+   **Then fully quit and reopen Dungeondraft** — it reads mod source once at
+   launch, so a newly enabled mod is not running until you restart. Create or
+   open a map afterwards: the bridge does not start until a map is open.
+
+4. **Extract the companion archive** — double-click it in Finder, or run
+   `tar -xzf battlemap-mcp-companion-<version>-macos-arm64.tar.gz`. Move the
+   whole `battlemap-mcp` folder somewhere permanent in your home folder, such
+   as **~/Apps/battlemap-mcp**. Keep `_internal` and every other file alongside
+   the executable.
+
+5. Open **Connect Codex.command** or **Connect Claude Code.command**. These
+   install the bundled skills and register the companion with that client.
+
+6. **If macOS blocks it** (unsigned builds only). What you see depends on how
+   you started it:
+
+   - **From Finder:** a dialog saying the developer cannot be verified. Open
+     **System Settings → Privacy & Security**, scroll to Security, and click
+     **Open Anyway** next to the blocked item.
+   - **From Terminal:** no dialog and no message at all — just `Killed: 9` and
+     exit code 137. That is the same block, reported silently. It is not a
+     crash and not a fault in the package.
+
+   If you choose to run an unsigned build anyway, clear the download quarantine
+   on the folder from step 4:
+
+   ```sh
+   xattr -d -r com.apple.quarantine ~/Apps/battlemap-mcp
+   ```
+
+   That marks one folder as something you decided to trust. It does not turn
+   off Gatekeeper and changes nothing else on your Mac. If you would rather
+   not, stop here and say so.
+
+7. Open **Check connection.command** with a map open in Dungeondraft. Expect
    **Ready: connected to MCP Bridge**. Fully quit and reopen your AI client.
 
 If you prefer Terminal, from the companion folder:
@@ -35,7 +82,8 @@ If you prefer Terminal, from the companion folder:
 ./battlemap-mcp doctor --live --brief
 ```
 
-Use `claude-code` instead of `codex` for Claude Code.
+Use `claude-code` instead of `codex` for Claude Code. On an unsigned build both
+commands hit the step 6 block first.
 
 ## Linux
 

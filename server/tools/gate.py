@@ -32,6 +32,7 @@ CHECKS: list[tuple[str, list[str], pathlib.Path, bool]] = [
     ("tool lifecycle", [PYTHON, "tools/check_tool_lifecycle.py"], SERVER, False),
     ("engine guards", [PYTHON, "tools/check_engine_guards.py"], SERVER, False),
     ("skills", [PYTHON, str(REPO / "tools" / "check_skills.py")], SERVER, False),
+    ("agent docs", [PYTHON, str(REPO / "tools" / "check_agent_docs.py")], SERVER, False),
     ("types", [PYTHON, "-m", "mypy", "battlemap_mcp"], SERVER, True),
     ("tests", [PYTHON, "-m", "pytest", "-q"], SERVER, True),
 ]

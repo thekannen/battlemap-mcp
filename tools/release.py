@@ -24,6 +24,17 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 MOD_FILES = ("mcp_bridge.ddmod", "scripts/tools/mcp_bridge.gd", "LICENSE")
+# Desktop shells drop these into any directory a user browses, at any depth.
+OS_METADATA = frozenset({".DS_Store", "Thumbs.db", "desktop.ini", ".AppleDouble"})
+# Artifacts the running editor writes back into a payload directory, by path
+# relative to that directory. Both these and OS_METADATA are gitignored and are
+# never archived, because build_mod writes MOD_FILES explicitly. validate_tree
+# used to reject them anyway as unexpected payload, so a macOS checkout whose
+# mod/ folder had been opened in Finder, or any checkout Dungeondraft had
+# generated its mod icon into, could not package a release at all. The
+# allowlist still rejects everything else, which is what guards against a
+# stray log or key sitting in the payload directory.
+MOD_ARTIFACTS = frozenset({"icons/mcp_bridge.png"})
 MOD_ROOT = "battlemap-mcp-bridge"
 SERVER_FILES = (
     "__init__.py",
@@ -147,10 +158,14 @@ def set_version(root, version):
     check_versions(root)
 
 
-def validate_tree(base, allowed=None):
+def validate_tree(base, allowed=None, artifacts=frozenset()):
     if base.is_symlink():
         raise ValueError(f"Symlink payload: {base}")
     for path in base.rglob("*"):
+        if path.name in OS_METADATA:
+            continue
+        if path.relative_to(base).as_posix() in artifacts:
+            continue
         if path.is_symlink():
             raise ValueError(f"Symlink payload: {path}")
         if (
@@ -163,7 +178,7 @@ def validate_tree(base, allowed=None):
 
 def build_mod(root, out, version):
     base = root / "mod" / MOD_ROOT
-    validate_tree(base, MOD_FILES)
+    validate_tree(base, MOD_FILES, MOD_ARTIFACTS)
     out.mkdir(parents=True, exist_ok=True)
     archive = out / f"battlemap-mcp-mod-{version}.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zipped:
@@ -174,6 +189,99 @@ def build_mod(root, out, version):
 
 def run(*args, **kwargs):
     subprocess.run([str(a) for a in args], check=True, **kwargs)
+
+
+# macOS notarization.
+#
+# Unsigned builds are killed by Gatekeeper the moment they run, and on the
+# Terminal path with no message at all -- just SIGKILL and exit 137. That was
+# the outcome of the first clean macOS install run, so signing is the fix that
+# makes a Mac install work at all.
+#
+# Credentials never appear here, in the repository, or on a command line. The
+# maintainer creates a notarytool keychain profile once:
+#
+#   xcrun notarytool store-credentials <profile> \
+#       --apple-id <id> --team-id <team> --password <app-specific-password>
+#
+# and this passes only the profile NAME. Signing identity likewise comes from
+# the keychain by name.
+MACHO_MAGIC = (
+    b"\xcf\xfa\xed\xfe",  # 64-bit little-endian
+    b"\xce\xfa\xed\xfe",  # 32-bit little-endian
+    b"\xca\xfe\xba\xbe",  # universal
+)
+
+
+def is_macho(path):
+    """Return whether the file starts with a Mach-O magic number."""
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(4) in MACHO_MAGIC
+    except OSError:
+        return False
+
+
+def sign_bundle(bundle, identity):
+    """Sign every Mach-O in the bundle, nested first, then the executable.
+
+    Hardened runtime and a secure timestamp are both required for
+    notarization; without either, submission is accepted and the result comes
+    back Invalid.
+    """
+    executable = bundle / "battlemap-mcp"
+    if not executable.is_file():
+        raise ValueError(f"Companion executable missing: {executable}")
+    nested = sorted(
+        (
+            p
+            for p in bundle.rglob("*")
+            if p.is_file() and not p.is_symlink() and p != executable and is_macho(p)
+        ),
+        key=lambda p: len(p.parts),
+        reverse=True,
+    )
+    for target in [*nested, executable]:
+        run(
+            "codesign",
+            "--force",
+            "--timestamp",
+            "--options",
+            "runtime",
+            "--sign",
+            identity,
+            target,
+        )
+    # Verify before spending a notarization round trip on a bad signature.
+    run("codesign", "--verify", "--strict", "--verbose=2", executable)
+    return len(nested) + 1
+
+
+def notarize_bundle(bundle, out, profile):
+    """Submit the signed bundle and wait for Apple's verdict.
+
+    Returns the path of the zip submitted. The ticket is published against the
+    signature hashes, so the shipped .tar.gz is covered by it; Gatekeeper looks
+    the ticket up online. A loose folder cannot be stapled, so a first run on a
+    machine with no network can still be refused -- shipping a .dmg or .pkg is
+    what would make it work offline.
+    """
+    submission = out / f"{bundle.name}-notarize.zip"
+    if submission.exists():
+        submission.unlink()
+    # ditto, not zip: it preserves the symlinks and metadata the signature
+    # covers, and a plain zip invalidates them.
+    run("ditto", "-c", "-k", "--keepParent", bundle, submission)
+    run(
+        "xcrun",
+        "notarytool",
+        "submit",
+        submission,
+        "--keychain-profile",
+        profile,
+        "--wait",
+    )
+    return submission
 
 
 def validate_companion_links(bundle):
@@ -321,7 +429,22 @@ def write_shortcuts(bundle, system):
             path.chmod(0o755)
 
 
-def build(root, out, companion=False, tag=None):
+def build(
+    root, out, companion=False, tag=None, sign_identity=None, notary_profile=None
+):
+    if sign_identity or notary_profile:
+        # Check this first: discovering it after a multi-minute build is the
+        # kind of thing that trains people to skip signing.
+        if platform.system() != "Darwin":
+            raise ValueError(
+                "signing and notarization are macOS-only; Windows builds are "
+                "deliberately unsigned"
+            )
+        if not (sign_identity and notary_profile):
+            raise ValueError(
+                "pass both --sign-identity and --notary-profile: notarizing an "
+                "unsigned bundle always comes back Invalid"
+            )
     version = check_versions(root, tag)
     out = out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -345,8 +468,9 @@ def build(root, out, companion=False, tag=None):
             shutil.copy2(path, package / path.name)
         for name in ("pyproject.toml", "hatch_build.py"):
             shutil.copy2(root / "server" / name, stage / "server" / name)
-        shutil.copytree(root / "mod", stage / "mod")
-        shutil.copytree(root / "skills", stage / "skills")
+        ignore_metadata = shutil.ignore_patterns(*OS_METADATA, "mcp_bridge.png")
+        shutil.copytree(root / "mod", stage / "mod", ignore=ignore_metadata)
+        shutil.copytree(root / "skills", stage / "skills", ignore=ignore_metadata)
         environment = work / "venv"
         venv.EnvBuilder(with_pip=True).create(environment)
         python = environment / (
@@ -446,6 +570,12 @@ def build(root, out, companion=False, tag=None):
                 bundle / ("battlemap-mcp.exe" if os.name == "nt" else "battlemap-mcp")
             )
             validate_companion_links(bundle)
+            if sign_identity and notary_profile:
+                signed = sign_bundle(bundle, sign_identity)
+                print(f"signed {signed} Mach-O file(s) with {sign_identity!r}")
+                submission = notarize_bundle(bundle, out, notary_profile)
+                submission.unlink(missing_ok=True)
+                print("notarization accepted")
             system = {"Windows": "windows", "Darwin": "macos", "Linux": "linux"}[
                 platform.system()
             ]
@@ -492,6 +622,24 @@ def main():
     package = commands.add_parser("build")
     package.add_argument("--out", type=Path, required=True)
     package.add_argument("--companion", action="store_true")
+    package.add_argument(
+        "--sign-identity",
+        default=os.environ.get("DD_SIGN_IDENTITY"),
+        help=(
+            "Developer ID Application identity name or hash, from "
+            "`security find-identity -v -p codesigning`. macOS only. "
+            "Defaults to $DD_SIGN_IDENTITY."
+        ),
+    )
+    package.add_argument(
+        "--notary-profile",
+        default=os.environ.get("DD_NOTARY_PROFILE"),
+        help=(
+            "notarytool keychain profile NAME created by "
+            "`xcrun notarytool store-credentials`. No secret is read or "
+            "passed here. Defaults to $DD_NOTARY_PROFILE."
+        ),
+    )
     package.add_argument("--tag")
     verify = commands.add_parser("smoke")
     verify.add_argument("executable", type=Path)
@@ -503,7 +651,14 @@ def main():
     elif args.command == "smoke":
         smoke(args.executable)
     else:
-        for artifact in build(ROOT, args.out, args.companion, args.tag):
+        for artifact in build(
+            ROOT,
+            args.out,
+            args.companion,
+            args.tag,
+            args.sign_identity,
+            args.notary_profile,
+        ):
             print(artifact)
 
 
