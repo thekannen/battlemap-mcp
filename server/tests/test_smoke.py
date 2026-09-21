@@ -110,16 +110,47 @@ def test_server_instructions_cover_the_traps():
         "NEVER GUESS",  # a bad asset path destabilised the app
         "256 woxels",  # coordinate system
         "scatter_objects",  # the furnished-vs-placed distinction
-        "AT PLACEMENT",  # colour cannot be changed afterwards
-        "modulate",  # the other, non-interchangeable tint
         "screenshot",  # build, look, adjust
-        # delete_element used to wreck the undo stack; it is now reversible, and
-        # the guidance says so rather than warning about a trap that is gone.
-        "terrain and cave edits all reverse",
-        "woxels per pixel",  # set_camera zoom runs backwards from intuition
         "shadow",  # supports visual depth along relevant structure
+        # C6: after another client undid a rock, Claude said it was still there
+        # without a tool call, reasoning that it had made no edits itself.
+        "never answer from memory",
+        "y grows DOWN",  # C6: Codex called y=390 the lower-left corner
+        "saved file path",  # S3: the image reached the model, never the user
     ):
         assert rule in INSTRUCTIONS, f"guidance lost its {rule!r} rule"
+
+
+# Rules that belong to one tool live in that tool's description, where the
+# model reads them when it is about to make that call. The instructions carry
+# only what applies before or without a call: the session contract, routing,
+# and the shared-map warning. Claude Code defers MCP tools until a schema is
+# fetched, so the instructions also serve as the index of which tools exist.
+RULES_ON_TOOLS = {
+    "place_object": ("baked at placement", "modulate", "flat red"),
+    "modify_object": ("color is REFUSED", "modulate"),
+    "scatter_objects": ("baked at placement",),
+    "undo": ("terrain / cave", "40 steps"),
+    "delete_element": ("undo()", "cannot be deleted"),
+    "set_camera": ("LARGER = zoomed OUT",),
+    "fit_elements": ("woxels-per-pixel",),
+    "save_map": ("DROPS edits",),
+    "get_status": ("saving.in_flight",),
+    "export_map": ("Universal VTT",),
+    "screenshot": ("give them that",),
+}
+
+
+def test_tool_specific_rules_live_on_their_tool():
+    """Moving a rule out of the instructions must not lose it."""
+    tools = {t.name: t.description or "" for t in asyncio.run(server.mcp.list_tools())}
+    missing = [
+        f"{name}: {rule!r}"
+        for name, rules in RULES_ON_TOOLS.items()
+        for rule in rules
+        if rule.lower() not in tools[name].lower()
+    ]
+    assert not missing, missing
 
 
 def test_server_instructions_fit_the_client_budget():

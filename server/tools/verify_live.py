@@ -474,7 +474,11 @@ def main() -> int:
         room_args["floor"] = "none"
     room_res = check("build_room", lambda: bridge.request("build_room", **room_args))
     if room_res:
-        created_ids.extend(room_res.get("ids", []))
+        # build_room reports wall_id / floor_id, not `ids`: reading only `ids`
+        # left one wall behind on every non-dirty run.
+        created_ids.extend(
+            room_res[key] for key in ("wall_id", "floor_id") if room_res.get(key) is not None
+        )
 
     # --- camera and capture ---
     check("get_camera", lambda: bridge.request("get_camera"))

@@ -68,42 +68,33 @@ Build maps in a live Dungeondraft. Call ping, then get_status: most tools need
 an open map, and get_status gives map_center and map_size_woxels. If ping
 fails, ask the user to start Dungeondraft; do not retry blindly.
 
-Coordinates are woxels: 256 woxels = 1 tile. Rects are [x, y, w, h];
-rotation is degrees.
+The map is shared: the user and other AI clients can change it between your
+turns. Re-read it before saying what is on it; never answer from memory.
+
+Coordinates are woxels: 256 woxels = 1 tile, origin top-left, y grows DOWN.
+Rects are [x, y, w, h]; rotation is degrees.
 
 NEVER GUESS an asset path. Pass back one that list_assets returned, verbatim.
 
 Order: build_room (walls + floor) -> add_portal -> floors and terrain ->
 place_prefab / place_objects -> scatter_objects -> add_light -> look -> save_map.
 
-Batch where you can: place_objects places many at chosen spots in one call and
-one undo step, delete_elements removes many, list_assets takes `searches`.
+Batch: place_objects and delete_elements take many in one undo step;
+list_assets takes `searches`.
 
 Floors: place_pattern tiles a room; fill_region / paint_terrain paint blended
 ground; paint_material makes an edged patch; dig_cave carves cave floor.
-Terrain, water and floor shapes are layers, not objects: paint over them or
-use invert. They cannot be deleted.
-
-color is applied AT PLACEMENT and cannot be changed later. Nonempty modulate
-is refused because it does not survive saving and reopening. Colourable assets
-render red until coloured.
 
 Use scatter_objects for incidental detail; hand-placed rows read as a grid.
 Establish a focal area, routes and quiet space; vary scale and rotation; run
 shadow paths along walls.
 
 Only draw_wall walls, add_portal doors and add_light lights carry into a VTT.
-Universal VTT is exported from the app's own dialog, not export_map.
 
-Look at your work: fit_elements() then screenshot.
-set_camera zoom is woxels per pixel, so larger sees more.
+Look at your work: fit_elements() then screenshot. You see images; the user
+does not, so when they ask to see one, give them its saved file path.
 
-undo reverses the LATEST undoable operation, including all of a place_prefab,
-scatter_objects or build_room. Creates, deletes, moves, modifications,
-terrain and cave edits all reverse; history holds 40 steps.
-
-save_map(filename=...) after each stage. Edits are refused while a save is in
-flight: wait and retry.
+save_map(filename=...) after each stage.
 
 No dedicated tool? list_tool_controls, tool_action, set_tool_option.
 """
@@ -1835,8 +1826,9 @@ def scatter_objects(
     rotation_min / rotation_max: random rotation range in degrees.
     min_gap: minimum woxel distance between placements. Use it to stop clumping;
       too large for the area and you get fewer than `count` (the response says so).
-    color: optional '#rrggbb' applied to every placement. Only colourable assets
-      respond — see place_object.
+    color: optional '#rrggbb' applied to every placement, baked at placement
+      and never changeable afterwards. Only colourable assets respond — see
+      place_object.
     seed: fixes the arrangement so a run is reproducible. Pass one when you want
       to adjust a single parameter and compare, rather than reshuffling everything.
     layer: layer VALUE for every placement (multiple of 100, -500..900). Same
@@ -3044,6 +3036,9 @@ def delete_element(id: int) -> dict:
 
     It leaves the map on the NEXT frame, so a get_status immediately after may
     still count it. Read the count back a moment later, not in the same breath.
+
+    Terrain, water and floor shapes are layers, not elements: they have no id
+    and cannot be deleted. Paint over them, or draw them again with invert.
     """
     return bridge.request("delete_element", id=id)
 
