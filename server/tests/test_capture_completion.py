@@ -70,8 +70,8 @@ def test_screenshots_use_distinct_files_and_preserve_old_output(tmp_path, monkey
         return {"path": str(path)}
 
     monkeypatch.setattr(server.bridge, "request", request)
-    first = server.screenshot()
-    second = server.screenshot()
+    first, _ = server.screenshot()
+    second, _ = server.screenshot()
     assert len(set(names)) == 2
     assert old.read_bytes() == b"previous output"
     assert first.data == second.data == data
@@ -127,7 +127,7 @@ def no_sleep(monkeypatch):
 def test_export_waits_for_the_bridge_operation_not_the_file(tmp_path, monkeypatch, no_sleep):
     fake = FakeExporter(tmp_path, polls=3)
     monkeypatch.setattr(server.bridge, "request", fake.request)
-    image = server.export_map()
+    image, _ = server.export_map()
     assert image.data == image_bytes()
     assert fake.calls == ["export_map"] + ["get_operation"] * 4
 
@@ -154,7 +154,7 @@ def test_a_poll_that_times_out_is_retried(tmp_path, monkeypatch, no_sleep):
     """The final encode blocks Dungeondraft's main thread, which serves the socket."""
     fake = FakeExporter(tmp_path, polls=0, flaky=3)
     monkeypatch.setattr(server.bridge, "request", fake.request)
-    assert server.export_map().data == image_bytes()
+    assert server.export_map()[0].data == image_bytes()
 
 
 def test_timeout_names_the_operation_to_collect(tmp_path, monkeypatch, no_sleep):
@@ -163,7 +163,7 @@ def test_timeout_names_the_operation_to_collect(tmp_path, monkeypatch, no_sleep)
     with pytest.raises(ValidationError, match=r"get_export\(operation_id='export-1'\)"):
         server.export_map(timeout=2)
     fake.polls = 0
-    assert server.get_export("export-1").data == image_bytes()
+    assert server.get_export("export-1")[0].data == image_bytes()
     assert len(fake.names) == 1, "collecting must never start a second render"
 
 

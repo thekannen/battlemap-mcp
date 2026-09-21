@@ -81,9 +81,21 @@ def test_images_pass_through_as_image_content(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "_wait_for_file", lambda path, timeout=60.0: png.getvalue())
     monkeypatch.setattr(server, "_prune_captures", lambda: 0)
 
-    [block] = _call("screenshot", {}).content
-    assert block.type == "image"
-    assert block.mime_type == "image/png"
+    image, caption = _call("screenshot", {}).content
+    assert image.type == "image"
+    assert image.mime_type == "image/png"
+    # The client folds the image into the tool call, so the person asking to
+    # "see" the map needs the file: the caption must name it (C2, 2026-09-21).
+    assert caption.type == "text"
+    assert "Screenshot saved: x" in caption.text
+    assert "the user cannot" in caption.text
+
+
+def test_ordinary_list_results_are_still_compact_json(monkeypatch):
+    """Only a list carrying an image is passed through as content blocks."""
+    assert server._model_text([1, {"a": 2}]) == '[1,{"a":2}]'
+    sentinel = [server.Image(data=b"x", format="png"), "caption"]
+    assert server._model_text(sentinel) is sentinel
 
 
 def test_no_tool_advertises_an_output_schema():
@@ -144,3 +156,36 @@ def test_an_unwritable_timing_file_never_fails_a_tool(bridge, monkeypatch, tmp_p
     monkeypatch.setenv(timing.ENV_VAR, str(tmp_path / "missing-dir" / "timing.jsonl"))
     bridge["get_terrain"] = TERRAIN
     assert not _call("get_terrain", {"samples": 16}).is_error
+
+
+# The same client that cut server instructions at 2048 characters cuts tool
+# descriptions there too. list_assets was 3,083 characters, so the model never
+# saw its "up to 8 terms" rule: the S1 and S2 UAT workers sent 16 and 17
+# searches and each failed one call without knowing why (2026-09-21).
+DESCRIPTION_LIMIT = 2048
+
+
+def test_every_tool_description_fits_the_client_limit():
+    tools = asyncio.run(server.mcp.list_tools())
+    too_long = {
+        t.name: len(t.description or "")
+        for t in tools
+        if len(t.description or "") > DESCRIPTION_LIMIT
+    }
+    assert too_long == {}, f"descriptions a client will truncate: {too_long}"
+
+
+def test_the_search_cap_is_in_the_schema_not_only_the_prose():
+    tool = next(t for t in asyncio.run(server.mcp.list_tools()) if t.name == "list_assets")
+    searches = tool.input_schema["properties"]["searches"]
+    array = next(branch for branch in searches["anyOf"] if branch.get("type") == "array")
+    assert array["maxItems"] == server.MAX_SEARCHES
+    assert str(server.MAX_SEARCHES) in searches["description"]
+
+
+def test_too_many_searches_reaches_the_model_as_an_error(bridge):
+    result = _call(
+        "list_assets", {"searches": [f"term{i}" for i in range(server.MAX_SEARCHES + 1)]}
+    )
+    assert result.is_error
+    assert str(server.MAX_SEARCHES) in result.content[0].text

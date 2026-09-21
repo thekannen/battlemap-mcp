@@ -194,3 +194,58 @@ def test_a_never_saved_map_is_not_mistaken_for_a_file(fast_clock):
     assert server._same_map_file("Null", SAVED) is False
     assert server._same_map_file("", SAVED) is False
     assert server._same_map_file(SAVED, SAVED) is True
+
+
+# Measured while building UAT fixtures (2026-09-20): during a map load the
+# outgoing bridge instance still answers, reporting the NEW map_file with the OLD
+# map's counts. open_map returned `walls: 7` for a blank map.
+STALE = {
+    "map_open": True,
+    "map_file": SAVED,
+    "counts": {"walls": 7},
+    "map_size_woxels": [4096, 4096],
+}
+FRESH = {
+    "map_open": True,
+    "map_file": SAVED,
+    "counts": {"walls": 0},
+    "map_size_woxels": [8960, 5120],
+}
+
+
+def test_open_map_ignores_the_outgoing_instance_reporting_the_new_path(bridge, fast_clock):
+    bridge.script["open_map"] = [{"opening": True}]
+    bridge.script["get_status"] = [
+        {"map_open": True, "map_file": "/maps/previous.dungeondraft_map", "bridge_instance": 1},
+        {**STALE, "bridge_instance": 1},  # right path, wrong world
+        {**FRESH, "bridge_instance": 2},
+    ]
+
+    result = server.open_map(SAVED)
+
+    assert result["opened"] is True
+    assert result["counts"] == {"walls": 0}
+    assert result["map_size_woxels"] == [8960, 5120]
+
+
+def test_reopening_the_same_file_still_waits_for_the_new_instance(bridge, fast_clock):
+    """The path matches from the first reading, so only the instance can tell."""
+    bridge.script["open_map"] = [{"opening": True}]
+    bridge.script["get_status"] = [
+        {**STALE, "bridge_instance": 1},
+        {**STALE, "bridge_instance": 1},
+        {**FRESH, "bridge_instance": 2},
+    ]
+
+    assert server.open_map(SAVED)["counts"] == {"walls": 0}
+
+
+def test_an_older_bridge_falls_back_to_rejecting_readings_with_history(bridge, fast_clock):
+    bridge.script["open_map"] = [{"opening": True}]
+    bridge.script["get_status"] = [
+        {"map_open": True, "map_file": "/maps/previous.dungeondraft_map", "undo_depth": 12},
+        {**STALE, "undo_depth": 12},  # no instance reported: history gives it away
+        {**FRESH, "undo_depth": 0, "redo_depth": 0},
+    ]
+
+    assert server.open_map(SAVED)["counts"] == {"walls": 0}

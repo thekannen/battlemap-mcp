@@ -20,13 +20,13 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Annotated, Any, TypeVar
 from uuid import uuid4
 
 import pydantic_core
 from mcp.server.mcpserver import Image, MCPServer
 from PIL import Image as PILImage
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic import ValidationError as PydanticValidationError
 
 from . import installer, timing
@@ -122,16 +122,22 @@ def _model_text(result: Any) -> Any:
     characters where 2,857 carry the same data. Same serialiser, same
     fallbacks, no indentation. Images and strings pass through untouched.
     """
+    if isinstance(result, list) and any(isinstance(item, Image) for item in result):
+        # Image plus caption: content blocks for the client, not a JSON string.
+        return result
     if isinstance(result, dict | list):
         return pydantic_core.to_json(result, fallback=str).decode()
     return result
 
 
 def _result_size(row: dict, sent: Any) -> None:
-    if isinstance(sent, str):
-        row["result_chars"] = len(sent)
-    elif isinstance(sent, Image) and sent.data is not None:
-        row["result_image_bytes"] = len(sent.data)
+    blocks = sent if isinstance(sent, list) else [sent]
+    chars = sum(len(b) for b in blocks if isinstance(b, str))
+    image_bytes = sum(len(b.data) for b in blocks if isinstance(b, Image) and b.data is not None)
+    if chars:
+        row["result_chars"] = chars
+    if image_bytes:
+        row["result_image_bytes"] = image_bytes
 
 
 def tool() -> Callable[[_Tool], _Tool]:
@@ -488,11 +494,17 @@ def prepare_map_with_packs(filename: str, packs: list[str] | None = None) -> dic
     _wait_for_save(expected_path=str(saved.get("path") or ""), saves_before=before)
 
     report = prepare_map_file(Path(source), destination, manifest)
+    answering = _status_before_open()
     bridge.request("open_map", path=str(destination))
-    report["opened"] = True
+    # This used to report opened: True the moment the command was sent, so a
+    # placement made straight afterwards could reach the map being replaced.
+    arrived = _wait_for_map(str(destination), previous=answering)
+    report["opened"] = arrived["opened"]
     report["note"] = (
         "the prepared copy is now the open map; list_assets here offers every "
         "asset from the included packs"
+        if arrived["opened"]
+        else arrived["note"]
     )
     return report
 
@@ -829,60 +841,47 @@ def list_assets(
     vanilla_only: bool = False,
     match_mode: str = "substring",
     min_score: float = DEFAULT_MIN_SCORE,
-    searches: list[str] | None = None,
+    searches: Annotated[
+        list[str] | None,
+        Field(
+            max_length=MAX_SEARCHES,
+            description=(
+                f"Up to {MAX_SEARCHES} terms looked up in one call, instead of `search`. "
+                "They share one budget of results, so more terms means fewer each."
+            ),
+        ),
+    ] = None,
 ) -> dict:
     """List asset paths in a category, optionally filtered by a case-insensitive substring.
 
     category: e.g. 'Objects', 'Walls', 'Paths', 'Terrain', 'Lights', 'Portals', 'Roofs'.
-    search: substring to match against the asset path (e.g. 'chair', 'door', 'grass').
-    Pass a returned path as the 'asset' argument to the create tools.
+    search: substring matched against the asset path ('chair', 'door', 'grass').
+    Pass a returned path, verbatim, as the 'asset' of the create tools.
 
-    `colorable` gives the INDEX of each returned asset that carries an unpainted
-    colour mask — positions in `assets`, not paths, because repeating the paths
-    was half the size of a listing. Those assets render flat RED unless you pass
-    `color` when you place them, and colour is baked at placement:
-    modify_object cannot repaint an object afterwards, so the only fix is to
-    delete it and place another. Check this list before choosing, not after.
+    searches: up to 8 terms in one call instead of `search` — tables AND chairs
+    AND barrels. More than 8 is refused; split the call. Results come back
+    under `results`, keyed by term. Terms SHARE a budget of 80 paths, reported
+    as `per_term_limit`, so this is for choosing a handful, not reading the
+    catalogue. Pass `searches` or `search`, not both.
 
-    `colorable_scanned` is false when the result was too large to scan, in
-    which case an absent path means "not checked", not "not colourable" —
-    narrow the search rather than assuming.
+    Results depend on the packs THIS MAP includes: none gives the ~1800 core
+    assets, a full library over a hundred thousand. If a search comes up thin,
+    check list_asset_packs before concluding an asset does not exist.
 
-    What you get back depends on which packs THIS MAP includes: Dungeondraft
-    scopes asset packs per map, so a map that includes none returns only the
-    ~1800 core assets, and a map that includes a full library can return well
-    over a hundred thousand. If a search comes up thin, check list_asset_packs
-    before concluding an asset does not exist.
+    `colorable` lists INDEXES into `assets` of assets with an unpainted colour
+    mask. They render flat RED unless you pass `color` at placement, and colour
+    cannot be changed afterwards — check before choosing. `colorable_scanned`
+    false means the result was too large to scan: narrow the search.
 
-    vanilla_only: exclude optional custom asset packs. This is useful when a
-    stable check needs native Dungeondraft assets without a large pack library
-    crowding them out of the requested result page.
+    match_mode: 'substring' (default, contiguous); 'tokens' (every word appears
+    anywhere, any order: "table round" finds round_table_01); 'fuzzy' (tokens
+    plus resemblance, so "barrle" lands; ranked, with `scores`). min_score is
+    the 0..1 cutoff for 'fuzzy'. None of these understand meaning — "mug" will
+    not find a tankard — so widen a term or list the category before
+    concluding something is absent.
 
-    match_mode: how `search` is applied.
-      'substring' (default) — the current contiguous, case-insensitive test.
-      'tokens' — every word of the search must appear somewhere in the path, in
-        any order, so "table round" finds round_table_01 and "double door"
-        finds door_double_01. Directory words count too.
-      'fuzzy' — as tokens, plus resemblance scoring, so a typo ("barrle") still
-        lands. Results come back ranked, with `scores` alongside `assets`.
-
-    None of these understand meaning. "mug" will not find a tankard and
-    "tableware" will not find bread — if a term draws a blank, widen it or list
-    the category rather than concluding the asset is absent.
-
-    min_score: 0..1 cutoff for 'fuzzy' only. Lower admits looser matches.
-
-    searches: look up to 8 terms at once instead of `search`, for when a scene
-    needs tables AND chairs AND barrels. Results come back under `results`,
-    keyed by term, each with its own `assets` and `colorable`. Ranked modes
-    survey the category once for the whole call rather than once per term, so
-    this is cheaper for the editor as well as shorter for you.
-
-    Terms SHARE a budget of 80 paths, so more terms means fewer each, and
-    `per_term_limit` reports what was applied. That is deliberate: the result is
-    for choosing a handful of assets, not for reading the catalogue. Raise
-    `limit` only when one term really needs more, and search again for a term
-    that came back thin. Pass `searches` or `search`, not both.
+    vanilla_only: exclude optional packs, when native assets would otherwise be
+    crowded out of the result page.
     """
     require_choice(match_mode, list(MATCH_MODES), "match_mode")
     if not 0.0 <= min_score <= 1.0:
@@ -2800,10 +2799,36 @@ def open_map(path: str, wait: bool = True) -> dict:
     """
     if not path:
         raise ValidationError("path is required")
+    before = _status_before_open() if wait else {}
     accepted = bridge.request("open_map", path=path)
     if not wait:
         return accepted
-    return {**accepted, **_wait_for_map(path)}
+    return {**accepted, **_wait_for_map(path, previous=before)}
+
+
+def _status_before_open() -> dict:
+    """The bridge answering now, so the wait can tell its replacement apart."""
+    try:
+        return bridge.request("get_status")
+    except BridgeUnavailableError:
+        return {}
+
+
+def _is_fresh_instance(status: dict, previous: dict) -> bool:
+    """Did this reading come from the bridge that the new map started?
+
+    Every map load starts a new bridge instance, and for a moment the old one
+    still answers with the NEW map_file but the OLD map's counts and size —
+    twice measured building UAT fixtures (2026-09-20): a blank map reported
+    `walls: 7`, and later 50 objects and 9 portals, while get_status a moment
+    later showed zeros. So the file path cannot settle it. The instance can.
+    """
+    was, now = previous.get("bridge_instance"), status.get("bridge_instance")
+    if was is not None and now is not None:
+        return now != was
+    # A bridge too old to report its instance: a freshly loaded one has made no
+    # edits, so a reading that carries history belongs to the one being replaced.
+    return not (status.get("undo_depth") or status.get("redo_depth"))
 
 
 def _same_map_file(reported: str, requested: str) -> bool:
@@ -2822,8 +2847,13 @@ def _same_map_file(reported: str, requested: str) -> bool:
         return Path(reported).name == Path(requested).name
 
 
-def _wait_for_map(path: str, timeout: float = 60.0) -> dict:
-    """Block until the requested map is the open one, tolerating the reconnect."""
+def _wait_for_map(path: str, timeout: float = 60.0, previous: dict | None = None) -> dict:
+    """Block until the requested map is open in a NEW bridge instance.
+
+    Tolerates the reconnect. `previous` is the status read before the open was
+    sent; see _is_fresh_instance for why the path alone is not enough.
+    """
+    previous = previous or {}
     deadline = time.time() + timeout
     status: dict = {}
     unreachable: str = ""
@@ -2837,7 +2867,11 @@ def _wait_for_map(path: str, timeout: float = 60.0) -> dict:
             unreachable = str(exc)
         else:
             unreachable = ""
-            if status.get("map_open") and _same_map_file(map_file_path(status), path):
+            if (
+                status.get("map_open")
+                and _same_map_file(map_file_path(status), path)
+                and _is_fresh_instance(status, previous)
+            ):
                 return {
                     "opened": True,
                     "map_file": map_file_path(status),
@@ -3088,8 +3122,23 @@ def set_level(id: int) -> dict:
 # --------------------------------------------------------------------------
 
 
+def _shown(image: Image, path: str, what: str) -> list[Image | str]:
+    """The image for the model, and where the file is for the person.
+
+    A client shows an MCP image to the model but typically folds it inside the
+    tool call, so "show me" is answered by a description the user cannot check
+    unless they expand the call. Naming the saved file lets the model hand it
+    over. Found in the first Claude UAT run of C2 (2026-09-21).
+    """
+    return [
+        image,
+        f"{what} saved: {path}\nYou can see this image; the user cannot unless they "
+        "open that file. If they asked to see it, give them this path.",
+    ]
+
+
 @tool()
-def screenshot(max_px: int | None = None) -> Image:
+def screenshot(max_px: int | None = None) -> list[Image | str]:
     """Capture the current Dungeondraft window (the on-screen view) and return it as an image.
 
     Fast; shows exactly what's visible including the current camera framing. Use this
@@ -3099,13 +3148,20 @@ def screenshot(max_px: int | None = None) -> Image:
       the full capture. Worth setting when you are checking placement or
       coverage rather than judging materials and detail — a smaller image is a
       cheaper thing to look at, and every image stays in the conversation.
+
+    The result also names the saved file, at full resolution. The user does not
+    see the image you receive, so when they ask to see the map, give them that
+    path. Captures are kept until newer ones replace them (20 by default).
     """
     _require_max_px(max_px)
     name = f"screenshot-{uuid4().hex}.png"
     res = bridge.request("screenshot", name=name)
-    data = _wait_for_file(_capture_path(res.get("path"), name))
+    path = _capture_path(res.get("path"), name)
+    data = _wait_for_file(path)
     _prune_captures()
-    return Image(data=_downscale(data, max_px, "png"), format="png")
+    return _shown(
+        Image(data=_downscale(data, max_px, "png"), format="png"), str(path), "Screenshot"
+    )
 
 
 @tool()
@@ -3159,7 +3215,7 @@ def _wait_for_operation(operation_id: str, timeout: float) -> dict:
     )
 
 
-def _export_image(status: dict, max_px: int | None = None) -> Image:
+def _export_image(status: dict, max_px: int | None = None) -> list[Image | str]:
     if status.get("state") != "completed":
         raise ValidationError(
             f"export {status.get('operation_id')} {status.get('state')}: "
@@ -3168,12 +3224,13 @@ def _export_image(status: dict, max_px: int | None = None) -> Image:
     ext = str(status.get("format") or "png")
     # The bridge settles an export when its file appears, and Dungeondraft writes
     # it within one blocking frame; decoding still proves the bytes are whole.
-    data = _wait_for_file(_capture_path(status.get("path")), timeout=10.0)
+    path = _capture_path(status.get("path"))
+    data = _wait_for_file(path, timeout=10.0)
     _prune_captures()
     fmt = "jpeg" if ext in ("jpg", "jpeg") else ext
     # The file on disk keeps the resolution that was asked for; only the copy
     # handed to the model is shrunk, so a delivery render stays deliverable.
-    return Image(data=_downscale(data, max_px, fmt), format=fmt)
+    return _shown(Image(data=_downscale(data, max_px, fmt), format=fmt), str(path), "Export")
 
 
 def _require_wait(timeout: float) -> None:
@@ -3188,7 +3245,7 @@ def export_map(
     format: str = "png",
     timeout: float = EXPORT_WAIT_DEFAULT,
     max_px: int | None = None,
-) -> Image:
+) -> list[Image | str]:
     """Render the entire current map to a clean image (no UI) and return it.
 
     ppi controls resolution (pixels per grid cell): higher = sharper but larger/slower.
@@ -3226,7 +3283,7 @@ def export_map(
 @tool()
 def get_export(
     operation_id: str, timeout: float = EXPORT_WAIT_DEFAULT, max_px: int | None = None
-) -> Image:
+) -> list[Image | str]:
     """Wait for an export that export_map started, and return its image.
 
     Use it when export_map ran out of time: the render carries on in

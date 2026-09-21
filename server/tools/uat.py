@@ -622,13 +622,18 @@ def capture(u: Uat) -> None:
         server = importlib.import_module("battlemap_mcp.server")
         magic = {"png": b"\x89PNG", "jpg": b"\xff\xd8", "webp": b"RIFF"}
         for fmt, sig in magic.items():
-            img = server.export_map(ppi=16, format=fmt)
+            # The image for the model, then a caption naming the file for the
+            # person, since clients fold images inside the tool call (C2).
+            img, caption = server.export_map(ppi=16, format=fmt)
             content = img.to_image_content()
             head = base64.b64decode(content.data, validate=True)[:4]
             assert head.startswith(sig), f"{fmt}: got {head!r}"
             expected_mime = "image/jpeg" if fmt == "jpg" else f"image/{fmt}"
             assert content.mime_type == expected_mime, content.mime_type
-        return "png/jpg/webp all carry the right magic bytes"
+            named = pathlib.Path(caption.split("saved: ", 1)[1].split("\n", 1)[0])
+            assert named.is_file(), f"{fmt}: caption names a missing file {named}"
+            assert named.read_bytes()[:4].startswith(sig), f"{fmt}: named file is not {fmt}"
+        return "png/jpg/webp carry the right magic bytes, and each caption names that file"
 
     u.check("export_map produces real image formats", exports, needs_dirty=True)
 

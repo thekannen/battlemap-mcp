@@ -126,6 +126,7 @@ The checker confirms the mod connection; this first prompt confirms your AI app 
 | The checker reports an older/different bridge | Use both downloads from the same release, remove duplicate bridge copies, and fully quit and reopen Dungeondraft. |
 | The checker is ready, but the AI app cannot see Dungeondraft | Run the matching Connect file, finish any instructions it shows, then fully quit and reopen your AI app. |
 | Windows blocks the download | Windows builds are unsigned by choice. Report the warning to the maintainer; do not disable Windows security. |
+| You asked to see the map but no picture appeared | The assistant does see it, but your AI app folds images inside the tool call — expand the tool call to view it. The assistant is also given the saved file's location, so you can ask it for the file. |
 | macOS blocks the companion | Only happens on an unsigned build, and is not a crash. From Finder you get a "developer cannot be verified" dialog; from Terminal you get only `Killed: 9` and exit code 137, with no message. See [macOS install](docs/install-packages.md#macos), step 6. |
 
 [Update, move, or uninstall](docs/install-packages.md#update-or-remove).

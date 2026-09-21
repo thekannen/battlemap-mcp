@@ -114,7 +114,7 @@ def test_a_genuine_capture_is_returned(root, monkeypatch):
         return {"path": str(path)}
 
     monkeypatch.setattr(server.bridge, "request", request)
-    assert server.screenshot().data == data
+    assert server.screenshot()[0].data == data
     assert server.preview_assets(["textures/objects/x.png"]).data == data
 
 

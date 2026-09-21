@@ -1835,7 +1835,8 @@ func _safe_dispatch(req : Dictionary) -> Dictionary:
 		# --- read / query ---
 		"ping": return _ok({ "pong": true, "protocol": PROTOCOL_VERSION,
 			"engine": Engine.get_version_info(), "bridge_sha256": _bridge_sha256(),
-			"bridge_root": Global.get("Root", ""), "process_id": OS.get_process_id() })
+			"bridge_root": Global.get("Root", ""), "process_id": OS.get_process_id(),
+			"bridge_instance": _instance_id })
 		"get_status": return _get_status()
 		"list_asset_categories": return _list_asset_categories()
 		"list_asset_packs": return _list_asset_packs()
@@ -1943,7 +1944,7 @@ const ASSET_CATEGORIES := [
 func _get_status() -> Dictionary:
 	var level = Global.World.GetCurrentLevel()
 	if level == null:
-		return _ok({ "map_open": false })
+		return _ok({ "map_open": false, "bridge_instance": _instance_id })
 	var counts := {}
 	for kind in COLLECTIONS:
 		counts[kind] = _real_children(level, kind).size()
@@ -1974,6 +1975,10 @@ func _get_status() -> Dictionary:
 		"asset_packs": _asset_pack_counts(),
 		"signals": _signals.keys(),
 		"node_log_seq": _assign_seq,
+		# Which bridge instance answered. Every map load starts a new one, and for a
+		# moment the old one still answers with the NEW map_file but the OLD map's
+		# contents; open_map waits for a changed instance rather than a changed path.
+		"bridge_instance": _instance_id,
 	})
 
 func _layer_summary(level) -> Dictionary:
