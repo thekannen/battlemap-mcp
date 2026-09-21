@@ -91,7 +91,20 @@ there are expected, not a defect.
    on, or use a signed build, where none of this arises.
 
 7. Open **Check connection.command** with a map open in Dungeondraft. Expect
-   **Ready: connected to MCP Bridge**. Fully quit and reopen your AI client.
+   **Ready: connected to Battlemap MCP Bridge**. If it says the connection was
+   refused instead, the map is probably still loading: wait until it is fully
+   open and run the check again.
+
+   Then **restart your AI client**, because a newly registered server only
+   loads in a new session. In a terminal client, exit it and start it again. In
+   a desktop app, quit it completely (**⌘Q**, not just closing the window),
+   reopen it, and start a new conversation.
+
+   If you check the companion with `spctl -a -t exec -vv`, a signed build still
+   reports **rejected (the code is valid but does not seem to be an app)**. That
+   is `spctl` declining to judge a command-line tool as an application, not
+   Gatekeeper blocking it — the line below it naming **Developer ID
+   Application** is the part that matters, and the companion runs normally.
 
 If you prefer Terminal, from the companion folder:
 
@@ -172,7 +185,7 @@ With Battlemap MCP Bridge enabled and a map open in the Linux editor, run:
 ./battlemap-mcp doctor --live --brief
 ```
 
-Expect **Ready: connected to MCP Bridge**. Restart your AI client and ask it to
+Expect **Ready: connected to Battlemap MCP Bridge**. Restart your AI client and ask it to
 check the connection and report the open map's dimensions without changing it.
 If the checker cannot connect, confirm the editor and companion are in the same
 Linux environment, the correct mods folder is selected, and a map has finished

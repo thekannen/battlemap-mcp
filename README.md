@@ -107,7 +107,7 @@ If **Connect Codex** says automatic connection is unavailable, you can finish in
 
 ### 4. Check the connection
 
-With a map open in Dungeondraft, double-click **Check connection** in the companion folder. It should say **Ready: connected to MCP Bridge**.
+With a map open in Dungeondraft, double-click **Check connection** in the companion folder. It should say **Ready: connected to Battlemap MCP Bridge**.
 
 Then start a new conversation in your AI app and ask:
 
