@@ -19,6 +19,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install package and dependency auditor
-        run: python -m pip install -e ./server pip-audit
+        # The runner's Python ships its own setuptools, which is not one of
+        # this project's dependencies; keep it current so the audit reports
+        # on what the project actually installs.
+        run: python -m pip install --upgrade -e ./server pip-audit "setuptools>=83"
       - name: Audit installed dependencies
         run: python -m pip_audit --local --skip-editable

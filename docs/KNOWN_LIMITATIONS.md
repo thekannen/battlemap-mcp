@@ -4,7 +4,7 @@
 
 Windows, macOS, and Linux are supported targets, each with a limit:
 
-- **Windows:** the companion is unsigned. SmartScreen and similar warnings are expected on first run. Check downloads against the release's `SHA256SUMS`; do not turn off Windows security.
+- **Windows:** the companion is unsigned. SmartScreen and similar warnings are expected on first run. Check downloads against the release's `SHA256SUMS`; do not turn off Windows security. Run Dungeondraft normally, not as administrator: an elevated session cannot create the bridge's private token, so the bridge does not start.
 - **macOS:** the companion is signed with an Apple Developer ID and notarized by Apple. macOS confirms the notarization with Apple over the internet the first time the companion runs, so a first launch while offline can be blocked. The Intel companion has been checked only under Rosetta on Apple Silicon, not on an Intel Mac.
 - **Linux:** validated on Ubuntu 24.04 under WSL2 only, with Dungeondraft 1.2.0.1. Native Linux desktops and other distributions have not been tested.
 

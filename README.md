@@ -146,7 +146,7 @@ Pick packs that suit the scene rather than all of them: including a very large l
 | --- | --- |
 | MCP Bridge is missing from Mods | Check that your selected mods folder directly contains `battlemap-mcp-bridge`, with `mcp_bridge.ddmod` inside. Avoid an extra folder from ZIP extraction. |
 | Windows asks for administrator access | Put the files in your own user folder instead of Program Files. Select that mods folder in Dungeondraft. |
-| “Not connected yet” | Enable MCP Bridge, open a map, wait for loading, and close any Dungeondraft dialogs. Run the checker again. |
+| “Not connected yet” | Enable MCP Bridge, open a map, wait for loading, and close any Dungeondraft dialogs. On Windows, start Dungeondraft normally rather than as administrator. Run the checker again. |
 | The checker reports an older/different bridge | Use both downloads from the same release, remove duplicate bridge copies, and fully quit and reopen Dungeondraft. |
 | The checker is ready, but the AI app cannot see Dungeondraft | Run the matching Connect file, finish any instructions it shows, then fully quit and reopen your AI app. |
 | Windows warns about the download or the Connect file | The Windows companion is unsigned, so Windows may warn about it. See [platform limits](#platform-limits). Choose **More info → Run anyway** only for files from this project's Releases page; do not disable Windows security. |

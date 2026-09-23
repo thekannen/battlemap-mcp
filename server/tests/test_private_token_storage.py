@@ -15,6 +15,25 @@ from battlemap_mcp.installer import payload_root
 MOD = payload_root().joinpath("scripts", "tools", "mcp_bridge.gd")
 
 
+def _windows_elevated():
+    if sys.platform != "win32":
+        return False
+    import ctypes
+
+    return bool(ctypes.windll.shell32.IsUserAnAdmin())
+
+
+# An elevated Windows process creates files owned by the Administrators group,
+# not the user, so the bridge refuses them as an owner mismatch and does not
+# start. That is the documented limitation (run Dungeondraft normally, not as
+# administrator). Hosted Windows runners are always elevated, so the
+# create-and-verify cases can only run on a standard account.
+needs_standard_windows_account = pytest.mark.skipif(
+    _windows_elevated(),
+    reason="elevated Windows: new files are owned by Administrators, which the bridge refuses",
+)
+
+
 def native_script(name):
     match = re.search(r"var " + name + r' = ("(?:[^"\\]|\\.)*")', MOD.read_text())
     assert match is not None
@@ -92,6 +111,7 @@ def storage(tmp_path):
     return root / "token"
 
 
+@needs_standard_windows_account
 def test_create_and_recheck_private_storage(tmp_path):
     token = storage(tmp_path)
     assert harden(token, reset=True) == 0
@@ -103,6 +123,7 @@ def test_create_and_recheck_private_storage(tmp_path):
         assert token.parent.stat().st_mode & 0o777 == 0o700
 
 
+@needs_standard_windows_account
 def test_creates_private_directory_without_changing_ancestors_or_dd(tmp_path):
     root = tmp_path.resolve()
     dd = root / "Dungeondraft"
@@ -384,6 +405,7 @@ class FailingFile:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows native ACL inheritance")
+@needs_standard_windows_account
 def test_windows_removes_permissive_inheritance(tmp_path):
     token = storage(tmp_path)
     icacls = str(Path(os.environ["SystemRoot"]) / "System32/icacls.exe")
@@ -412,6 +434,7 @@ def test_windows_removes_permissive_inheritance(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows native ACL inheritance")
+@needs_standard_windows_account
 def test_windows_keeps_inherited_sibling_access(tmp_path):
     token = storage(tmp_path)
     siblings = [token.parent / name for name in ("logs", "mods", "mcp_output")]

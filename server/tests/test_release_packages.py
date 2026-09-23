@@ -185,7 +185,7 @@ def test_stray_file_still_rejected_alongside_artifacts(checkout, tmp_path):
         release.build_mod(checkout, tmp_path / "out", "0.2.0")
 
 
-def test_signing_flags_must_be_paired(checkout, tmp_path):
+def test_signing_flags_must_be_paired(checkout, tmp_path, monkeypatch):
     """Half a signing configuration fails before the build, not after it.
 
     Notarizing an unsigned bundle is accepted and then comes back Invalid, so
@@ -193,6 +193,9 @@ def test_signing_flags_must_be_paired(checkout, tmp_path):
     build is how people learn to skip signing.
     """
     release = release_module()
+    # Signing is macOS-only and refused first elsewhere; test the pairing rule
+    # as a Mac would see it, so the test holds on every CI host.
+    monkeypatch.setattr(release.platform, "system", lambda: "Darwin")
     for kwargs in (
         {"sign_identity": "Developer ID Application: X"},
         {"notary_profile": "some-profile"},
