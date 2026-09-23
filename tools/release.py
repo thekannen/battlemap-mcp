@@ -54,6 +54,7 @@ SERVER_FILES = (
     "server.py",
     "state_paths.py",
     "timing.py",
+    "updates.py",
     "validation.py",
 )
 SKILL_FILES = (
@@ -222,6 +223,85 @@ def dependency_pins(system=None, machine=None):
 
 def run(*args, **kwargs):
     subprocess.run([str(a) for a in args], check=True, **kwargs)
+
+
+# Windows antivirus false positives.
+#
+# PyInstaller's prebuilt Windows bootloader is the same file in every
+# PyInstaller app, malware included, so heuristic engines score it on sight:
+# v1.0.1's companion drew 2/70 on VirusTotal (SecureAge "Malicious", Skyhigh
+# "BehavesLike.Win64.Dropper"). Windows builds therefore compile their own
+# bootloader and refuse to package the stock one, and the executable carries
+# a version resource naming what it is. This is the prebuilt run.exe shipped by
+# both the pinned pyinstaller wheel and its sdist.
+STOCK_WINDOWS_BOOTLOADER = (
+    "c384e3d8007a0117ec61c8ff5c0e9032e398de1a25c3103978e9f02b43ab7145"
+)
+
+
+def compile_windows_bootloader(root, python):
+    """Reinstall the pinned PyInstaller from source with a freshly built bootloader.
+
+    Needs a C compiler; GitHub's Windows runners have MSVC.
+    """
+    requirements = (root / "packaging/build-requirements.txt").read_text()
+    (pin,) = (
+        line.strip()
+        for line in requirements.splitlines()
+        if line.strip().lower().startswith("pyinstaller==")
+    )
+    run(
+        python,
+        "-m",
+        "pip",
+        "install",
+        "--force-reinstall",
+        "--no-deps",
+        "--no-binary",
+        "pyinstaller",
+        pin,
+        env={**os.environ, "PYINSTALLER_COMPILE_BOOTLOADER": "1"},
+    )
+    package = subprocess.run(
+        [
+            str(python),
+            "-c",
+            "import os, PyInstaller; print(os.path.dirname(PyInstaller.__file__))",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    bootloader = Path(package) / "bootloader/Windows-64bit-intel/run.exe"
+    digest = hashlib.sha256(bootloader.read_bytes()).hexdigest()
+    if digest == STOCK_WINDOWS_BOOTLOADER:
+        raise ValueError("PyInstaller kept its prebuilt Windows bootloader")
+    print(f"compiled Windows bootloader: {digest}")
+    return digest
+
+
+def windows_version_info(version):
+    """PyInstaller --version-file text: an unlabelled executable scores worse."""
+    numbers = tuple(int(part) for part in version.split("-")[0].split(".")) + (0,)
+    strings = {
+        "CompanyName": "thekannen",
+        "FileDescription": "battlemap-mcp: MCP server for Dungeondraft",
+        "FileVersion": version,
+        "InternalName": "battlemap-mcp",
+        "LegalCopyright": "Copyright (c) 2026 Brandon Florian, thekannen. MIT License.",
+        "OriginalFilename": "battlemap-mcp.exe",
+        "ProductName": "battlemap-mcp",
+        "ProductVersion": version,
+    }
+    table = ", ".join(f"StringStruct({k!r}, {v!r})" for k, v in strings.items())
+    return (
+        "VSVersionInfo(\n"
+        f"  ffi=FixedFileInfo(filevers={numbers}, prodvers={numbers}, mask=0x3F,"
+        " flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),\n"
+        f"  kids=[StringFileInfo([StringTable('040904B0', [{table}])]),"
+        " VarFileInfo([VarStruct('Translation', [1033, 1200])])],\n"
+        ")\n"
+    )
 
 
 # macOS notarization.
@@ -517,6 +597,8 @@ def build(
             "-r",
             root / "packaging/build-requirements.txt",
         )
+        if companion and os.name == "nt":
+            compile_windows_bootloader(root, python)
         run(
             python,
             "-m",
@@ -567,6 +649,12 @@ def build(
                 "from battlemap_mcp.cli import main\n"
                 "if __name__ == '__main__':\n    raise SystemExit(main())\n"
             )
+            windows_args = []
+            if os.name == "nt":
+                version_file = work / "version_info.txt"
+                version_file.write_text(windows_version_info(version))
+                # UPX-packed executables are another antivirus heuristic.
+                windows_args = ["--version-file", version_file, "--noupx"]
             run(
                 python,
                 "-m",
@@ -588,6 +676,7 @@ def build(
                 work / "build",
                 "--specpath",
                 work,
+                *windows_args,
                 entry,
                 cwd=work,
             )

@@ -311,3 +311,42 @@ def test_intel_macs_pin_cryptography_to_a_version_with_wheels():
     assert release.dependency_pins("Darwin", "arm64") == []
     assert release.dependency_pins("Windows", "AMD64") == []
     assert release.dependency_pins("Linux", "x86_64") == []
+
+
+def test_windows_version_resource_names_the_release():
+    """An unlabelled executable scores worse with antivirus heuristics."""
+    text = release_module().windows_version_info("1.2.3")
+    compile(text, "version_info.txt", "eval")
+    assert "filevers=(1, 2, 3, 0)" in text
+    assert "StringStruct('ProductVersion', '1.2.3')" in text
+    assert "StringStruct('OriginalFilename', 'battlemap-mcp.exe')" in text
+
+
+def test_windows_bootloader_compile_refuses_the_stock_bootloader(tmp_path, monkeypatch):
+    release = release_module()
+    stock = tmp_path / "stock.exe"
+    stock.write_bytes(b"stock")
+    package = tmp_path / "PyInstaller"
+    (package / "bootloader/Windows-64bit-intel").mkdir(parents=True)
+    run_exe = package / "bootloader/Windows-64bit-intel/run.exe"
+    run_exe.write_bytes(b"stock")
+    calls = []
+    monkeypatch.setattr(release, "run", lambda *args, **kwargs: calls.append((args, kwargs)))
+    monkeypatch.setattr(
+        release.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout=f"{package}\n"),
+    )
+    monkeypatch.setattr(
+        release, "STOCK_WINDOWS_BOOTLOADER", release.hashlib.sha256(b"stock").hexdigest()
+    )
+    with pytest.raises(ValueError, match="prebuilt"):
+        release.compile_windows_bootloader(ROOT, tmp_path / "python")
+    ((args, kwargs),) = calls
+    assert "--no-binary" in args and args[-1].lower().startswith("pyinstaller==")
+    assert kwargs["env"]["PYINSTALLER_COMPILE_BOOTLOADER"] == "1"
+
+    run_exe.write_bytes(b"compiled")
+    assert release.compile_windows_bootloader(ROOT, tmp_path / "python") == (
+        release.hashlib.sha256(b"compiled").hexdigest()
+    )

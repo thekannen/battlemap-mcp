@@ -4,6 +4,22 @@ What changed in each release, written for the people using it. Versions cover
 the companion, the Dungeondraft mod and the map-making skills together; the
 wire protocol between them is versioned separately and is currently 25.
 
+## 1.0.2 — 2026-09-23
+
+Cleaner Windows downloads, and a way to hear about the next version.
+
+**Fewer antivirus warnings on Windows.** A couple of antivirus engines flagged
+the Windows companion as suspicious because of the generic launcher that many
+Python apps share, including malicious ones. The Windows companion is now built
+with its own launcher and carries its name and version, and every release is
+scanned on VirusTotal before it is published.
+
+**You'll hear about new versions.** The companion cannot update itself, so it
+now checks GitHub at most once a day for a newer release. When there is one,
+Check connection says so and your assistant passes the download link on. The
+check sends nothing about you or your maps; the privacy page explains it and
+how to turn it off.
+
 ## 1.0.1 — 2026-09-23
 
 Fixes for installing on Windows.

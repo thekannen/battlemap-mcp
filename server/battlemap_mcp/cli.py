@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__, client_config, installer, preflight, server, state_paths
+from . import __version__, client_config, installer, preflight, server, state_paths, updates
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,7 +67,9 @@ def dispatch_installer(args: argparse.Namespace) -> int:
             args.mods_dir or installer.default_mods_dir(), state_dir=state_dir
         )
         if args.brief:
-            return _brief_doctor(report, live=args.live)
+            code = _brief_doctor(report, live=args.live)
+            _report_update()
+            return code
         print(f"static files: {report.status}: {report.destination}")
         print(report.recommended_action)
         evidence = installer.latest_log_evidence(installer.dungeondraft_data_dir())
@@ -108,6 +110,7 @@ def dispatch_installer(args: argparse.Namespace) -> int:
             print(f"{label} skills: {destination}")
             for name, status in installer.inspect_skills(destination).items():
                 print(f"  {name}: {status}")
+        _report_update()
         return 0 if report.status == "healthy" and live_ok else 1
 
     if args.command == "uninstall":
@@ -327,6 +330,20 @@ def _explain_existing_registration(command: str, retry: str) -> None:
     print(f"Then run {retry} again.")
     if Path(command).exists():
         print("Keep the old companion until this succeeds.")
+
+
+def _report_update() -> None:
+    """Say so loudly when a newer release exists; say nothing otherwise."""
+    notice = updates.check_now()
+    if notice is None:
+        return
+    print()
+    print("=" * 72)
+    print(f"UPDATE AVAILABLE: battlemap-mcp {notice['latest']} (you have {notice['installed']})")
+    print("Download BOTH the companion and the mod ZIP from:")
+    print(f"  {notice['url']}")
+    print("This companion cannot update itself.")
+    print("=" * 72)
 
 
 def _brief_doctor(report: installer.DoctorReport, *, live: bool) -> int:

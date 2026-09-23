@@ -29,7 +29,7 @@ from PIL import Image as PILImage
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic import ValidationError as PydanticValidationError
 
-from . import arrangement, installer, timing
+from . import arrangement, installer, timing, updates
 from .asset_packs import build_manifest, prepare_map_file, unknown_ids
 from .asset_search import DEFAULT_MIN_SCORE, MATCH_MODES, rank_assets
 from .bridge_client import BridgeClient, BridgeUnavailableError, _state_file
@@ -102,6 +102,9 @@ does not, so when they ask to see one, give them its saved file path.
 save_map(filename=...) after each stage.
 
 No dedicated tool? list_tool_controls, tool_action, set_tool_option.
+
+If ping or get_status has update_available, tell the user its message and url
+once per session.
 """
 
 mcp = MCPServer("battlemap", instructions=INSTRUCTIONS)
@@ -335,10 +338,14 @@ def ping() -> dict:
     New bridges also report bridge_root (Dungeondraft's Global.Root for the
     executing mod) and process_id. These identify the running copy and process;
     they do not imply that files subsequently changed on disk are already loaded.
+
+    `update_available` appears when a newer release has been published. The
+    companion cannot update itself: pass its message and url to the user.
     """
     result = bridge.request("ping")
     if not isinstance(result, dict):
         return result
+    _add_update_notice(result)
     running = result.get("bridge_sha256") or None
     expected = _package_bridge_sha256()
     if running is None or expected is None:
@@ -371,7 +378,15 @@ def get_status() -> dict:
     are refused during that window because edits made mid-save are dropped from
     it — wait and retry rather than treating the refusal as an error.
     """
-    return bridge.request("get_status")
+    return _add_update_notice(bridge.request("get_status"))
+
+
+def _add_update_notice(result: Any) -> Any:
+    """Carry a newer published release to the model, which tells the user."""
+    notice = updates.available()
+    if notice is not None and isinstance(result, dict):
+        result["update_available"] = notice
+    return result
 
 
 @tool()
@@ -3616,6 +3631,7 @@ def install_dungeondraft_bridge(mods_dir: str = "", confirm: bool = False) -> di
 
 
 def main() -> None:
+    updates.start_background_check()
     mcp.run()
 
 

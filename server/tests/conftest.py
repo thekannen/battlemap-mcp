@@ -30,6 +30,12 @@ def _create_file_symlink_or_skip(link: Path, target: Path) -> None:
         raise
 
 
+@pytest.fixture(autouse=True)
+def _no_update_check(monkeypatch):
+    """Tests never reach GitHub; test_updates.py turns the check back on."""
+    monkeypatch.setenv("BATTLEMAP_MCP_UPDATE_CHECK", "0")
+
+
 @pytest.fixture
 def create_file_symlink_or_skip():
     return _create_file_symlink_or_skip
