@@ -29,13 +29,18 @@ from PIL import Image as PILImage
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic import ValidationError as PydanticValidationError
 
-from . import installer, timing
+from . import arrangement, installer, timing
 from .asset_packs import build_manifest, prepare_map_file, unknown_ids
 from .asset_search import DEFAULT_MIN_SCORE, MATCH_MODES, rank_assets
 from .bridge_client import BridgeClient, BridgeUnavailableError, _state_file
 from .errors import BridgeProtocolError, ValidationError
 from .floorplan import WOXELS_PER_TILE, analyse
-from .placement import DEFAULT_TOLERANCE, find_intrusions
+from .placement import (
+    DEFAULT_TOLERANCE,
+    find_adrift_fixtures,
+    find_intrusions,
+    find_stacks,
+)
 from .scene import DEFAULT_EMITTER_REACH, find_bare_ground, find_unexplained_lights
 from .validation import (
     reject_smart_tiles,
@@ -1065,6 +1070,9 @@ def validate_scene(samples: int = 48, emitter_reach: float = DEFAULT_EMITTER_REA
     an unlit lantern placed as decor reads as an explanation. Read `explained`
     too — it names the asset it credited, so a wrong match is visible.
 
+    `arrangement` is advice and never affects `ok`: how many objects sit at
+    scale 1.0 on quarter turns, and how much of the map the build covers.
+
     Outdoors, remember the global condition is itself a source. Under daylight
     the open ground needs no local sources at all; at night it wants the light
     to come from things that are in the scene.
@@ -1099,6 +1107,7 @@ def validate_scene(samples: int = 48, emitter_reach: float = DEFAULT_EMITTER_REA
         {
             "bare_ground": ground,
             "lights": lit,
+            "arrangement": arrangement.review(map_size, object_list, wall_list, light_list),
             "ok": ground["ok"] and lit["ok"],
             "level_id": status.get("level_id"),
         },
@@ -1191,26 +1200,28 @@ def validate_placements(tolerance_woxels: float = DEFAULT_TOLERANCE) -> dict:
       unmeasurable      objects the bridge returned no texture_size for, so
                         nothing could be checked. Not the same as clean; if
                         this is non-empty the map is only partly validated.
+      stacked           two LARGE objects in one place on one layer — crates
+                        inside crates, a tent through a wagon. Deliberate pairs
+                        land here too (a spit over a fire), so look before
+                        moving anything. Advice; never changes `ok`.
+      adrift_fixtures   torches, tapestries, hearths and the like standing away
+                        from any wall. Matched by asset name, so read the
+                        reported distance and decide.
 
-    What it deliberately does NOT report: objects overlapping each other. A
-    tankard on a table, bread on a bench, a lantern on a post — that is how
-    dressing a surface works, and flagging it would bury the findings above
-    under every correctly-dressed table on the map. Only architecture is
-    protected here.
+    Dressing a surface is NOT reported: a tankard on a table, bread on a
+    bench, a lantern on a post. Those sit on a higher layer than what they
+    rest on, which is how `stacked` tells the two apart — same layer, both
+    large, heavily overlapping.
 
-    Footprints are rotation-aware. `fit_elements` bounds are not, so do not
-    try to do this check yourself from them: every rotated object would read
-    as a defect.
+    Footprints are rotation-aware; `fit_elements` bounds are not, so every
+    rotated object would read as a defect if you checked from those.
 
-    A finding is evidence, not a verdict — look at the reported position and
-    decide. A hearth *set into* a thick wall is a deliberate choice that this
-    will report; an armchair halfway through the same wall is not.
+    A finding is evidence, not a verdict — read the position and decide. A
+    hearth set INTO a thick wall is a deliberate choice this will report.
 
     tolerance_woxels: how far past a wall's centre line an object may reach on
-      both sides before it counts as crossing. Walls have thickness and
-      furniture beds into them; the default (24, under a tenth of a tile) keeps
-      that quiet. Raise it if flush furniture is being reported, lower it to
-      catch shallower intrusions.
+      both sides before it counts as crossing. The default (24) keeps flush
+      furniture quiet; lower it to catch shallower intrusions.
     """
     if tolerance_woxels < 0:
         raise ValidationError("tolerance_woxels cannot be negative")
@@ -1226,6 +1237,8 @@ def validate_placements(tolerance_woxels: float = DEFAULT_TOLERANCE) -> dict:
         portal_list,
         tolerance=tolerance_woxels,
     )
+    report["stacked"] = find_stacks(object_list)
+    report["adrift_fixtures"] = find_adrift_fixtures(object_list, wall_list)
     report["level_id"] = status.get("level_id")
     return _with_coverage(report, [object_cover, wall_cover, portal_cover])
 
@@ -1398,6 +1411,9 @@ def place_objects(objects: list[PlacedObject]) -> dict:
     added afterwards.
 
     One undo() reverses the whole batch while it is the latest operation.
+
+    A batch placed entirely at scale 1.0 on quarter turns comes back with an
+    `arrangement_note`: most placements read better with slight variation.
     """
     if not objects:
         raise ValidationError("objects must not be empty")
@@ -1451,7 +1467,11 @@ def place_objects(objects: list[PlacedObject]) -> dict:
         if item.block_light is not None:
             params["block_light"] = item.block_light
         items.append(params)
-    return bridge.request("place_objects", objects=items)
+    result = bridge.request("place_objects", objects=items)
+    note = arrangement.batch_note(items)
+    if note and isinstance(result, dict):
+        result["arrangement_note"] = note
+    return result
 
 
 @tool()
@@ -2508,14 +2528,17 @@ def set_ambient_light(color: str) -> dict:
     """Set the map's ambient light colour — the single biggest lever on mood.
 
     A cold blue-grey reads as night or a dungeon; warm amber reads as lamplight
-    or dusk; near-white reads as flat daylight. This is map-wide, not a placed
-    light source (use add_light for those).
+    or dusk; a neutral grey lets the placed sources carry the colour. A fresh
+    map's white is flat glare rather than daylight, so decide rather than leave
+    it. Whatever you pick, look at a render afterwards: the mood is yours, but
+    every zone that hosts play has to read at the table. This is map-wide, not
+    a placed light source (use add_light for those).
 
     It is also functional, not just cosmetic: Universal VTT exports carry
     lighting into Foundry and similar tools, so this affects the map at its
     destination.
 
-    color: '#rrggbb'.
+        color: '#rrggbb'.
     """
     require_hex_color(color, "color")
     if not color:
@@ -2753,9 +2776,14 @@ def get_save_directory() -> dict:
     """Where save_map writes, and whether that directory exists.
 
     `configured` is the user's setting (may be empty); `effective` is what will
-    actually be used. With no setting, that is a `battlemap-mcp` folder
-    inside Dungeondraft's own map directory — created on demand, so this works
-    with no setup and keeps generated maps separate from hand-made ones.
+    actually be used, and `exists` describes THAT one. With no setting, it is a
+    `battlemap-mcp` folder inside Dungeondraft's own map directory — created
+    on demand, so this works with no setup and keeps generated maps separate
+    from hand-made ones.
+
+    `configured_missing` means the setting points at a directory that is gone.
+    Saving falls back to the default rather than failing, and `note` says so;
+    clear the setting with set_save_directory("") or point it somewhere real.
     """
     return bridge.request("get_save_directory")
 
@@ -2764,8 +2792,11 @@ def get_save_directory() -> dict:
 def set_save_directory(path: str) -> dict:
     """Set the directory save_map writes into. Pass "" to clear it.
 
-    Persisted per install, so it survives restarts. The directory must already
-    exist — this will not create one.
+    Persisted per install, so it survives restarts — a directory inside a
+    temporary folder keeps being the answer long after the folder is gone.
+    The directory must already exist; this will not create one. If it
+    disappears later, saving falls back to Dungeondraft's own map directory
+    and both get_save_directory and the save reply say so.
     """
     return bridge.request("set_save_directory", path=path)
 
@@ -3136,8 +3167,10 @@ def _shown(image: Image, path: str, what: str) -> list[Image | str]:
 def screenshot(max_px: int | None = None) -> list[Image | str]:
     """Capture the current Dungeondraft window (the on-screen view) and return it as an image.
 
-    Fast; shows exactly what's visible including the current camera framing. Use this
-    to check your work as you build. For a clean full-map render without UI, use export_map.
+    Fast; shows exactly what's visible including the current camera framing —
+    so AIM FIRST, or you photograph whatever the last call left on screen:
+    focus_element(id) for one thing, fit_elements() for the whole map. For a
+    clean full-map render without UI, use export_map.
 
     max_px: shrink the image's long edge to this before returning it. Omit for
       the full capture. Worth setting when you are checking placement or

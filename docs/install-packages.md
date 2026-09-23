@@ -6,18 +6,24 @@ client help, and updates.
 
 ## macOS
 
-Private candidate packages. **If your download is signed and notarized, skip
-step 6** — it just runs. An unsigned build is blocked by macOS the first time,
-and step 6 says what that looks like. Verified on Apple Silicon.
+Private candidate packages. The macOS companion is signed and notarized.
+Verified on Apple Silicon.
+
+**Be connected to the internet the first time you open it.** The companion
+ships as a `.tar.gz`, and that format cannot carry a stapled notarization
+ticket, so macOS looks the ticket up online at first launch. Without a network
+that first launch can be refused; connect and open it again. Step 6 describes
+what a refusal looks like.
 
 Windows builds are unsigned by choice and stay that way; SmartScreen warnings
 there are expected, not a defect.
 
 1. From the same [release](https://github.com/thekannen/battlemap-mcp/releases),
-   download `battlemap-mcp-mod-<version>.zip` and your Mac companion:
-   `macos-arm64.tar.gz` for Apple Silicon, or `macos-x64.tar.gz` for Intel.
-   **Apple menu → About This Mac** shows your chip; in Terminal, `uname -m`
-   prints `arm64` or `x86_64`. Skip the Source code archives.
+   download `battlemap-mcp-mod-<version>.zip` and the Mac companion,
+   `battlemap-mcp-companion-<version>-macos-arm64.tar.gz`. It is for Apple
+   Silicon; there is no Intel Mac companion yet. **Apple menu → About This
+   Mac** shows your chip; in Terminal, `uname -m` prints `arm64` on Apple
+   Silicon. Skip the Source code archives.
 
    The release also carries `SHA256SUMS` and a `.whl`. **You do not need the
    `.whl`** — it is for running from Python packaging instead of the companion,
@@ -62,8 +68,11 @@ there are expected, not a defect.
 5. Open **Connect Codex.command** or **Connect Claude Code.command**. These
    install the bundled skills and register the companion with that client.
 
-6. **If macOS blocks it** (unsigned builds only). What you see depends on how
-   you started it:
+6. **If macOS blocks it.** On the signed companion, first check that you are
+   online and open it again; that is usually all it takes, and you do not need
+   the quarantine command below. An unsigned build, such as one you built
+   yourself, is blocked every time until you allow it. What you see depends on
+   how you started it:
 
    - **From Finder:** a dialog saying the developer cannot be verified. Open
      **System Settings → Privacy & Security**, scroll to Security, and click
@@ -113,15 +122,14 @@ If you prefer Terminal, from the companion folder:
 ./battlemap-mcp doctor --live --brief
 ```
 
-Use `claude-code` instead of `codex` for Claude Code. On an unsigned build both
-commands hit the step 6 block first.
+Use `claude-code` instead of `codex` for Claude Code. On an unsigned build, or
+on a first launch without a network, both commands hit the step 6 block first.
 
 ## Linux
 
-**Linux is a supported target.** Earlier editor checks used Dungeondraft
-1.2.0.1 on Ubuntu 24.04 under WSL2. That history is not acceptance of these
-renamed companion packages or every Linux distribution. Final package and
-live acceptance remain pending for this candidate.
+**Validated on WSL2 only.** Linux is a supported target, but every test so far
+ran Dungeondraft 1.2.0.1 and this companion on Ubuntu 24.04 under WSL2 on
+Windows. Native Linux desktops and other distributions have not been tested.
 
 Install the purchased **Linux version of Dungeondraft**, along with your AI client,
 in the same Linux environment. For WSL, use Ubuntu's Linux filesystem and run the
@@ -146,8 +154,7 @@ The earlier setup used the Linux editor, not the Windows editor through Wine.
    ```
 
    It should print the package version. No Python, uv, Git, `sudo`, or PATH change
-   is needed. Native Linux package execution still needs acceptance testing;
-   not every Linux distribution has been verified.
+   is needed.
 
 ### Install and enable the mod
 

@@ -239,3 +239,144 @@ def find_intrusions(
             "table is correct placement. Only architecture is protected here."
         ),
     }
+
+
+# --- what a viewer calls "thrown on the map" -------------------------------
+
+# Objects big enough that landing on top of each other reads as a mistake
+# rather than as dressing. A tankard is ~32 woxels; a crate or a tent is
+# several times that, and two of those overlapping is the defect people name.
+LARGE_HALF = 48.0
+
+# How much of the smaller footprint must be covered before it is a stack.
+STACK_OVERLAP = 0.5
+
+# Fixtures that belong ON a wall. Name-based, so treat a finding as a prompt to
+# look: a free-standing brazier is not here, and an oddly named sconce is missed.
+WALL_FIXTURES = (
+    "torch",
+    "sconce",
+    "tapestry",
+    "banner",
+    "painting",
+    "portrait",
+    "mirror",
+    "hearth",
+    "fireplace",
+)
+
+# A wall fixture may sit this far from a wall's centre line and still be
+# mounted: the wall has thickness and the object has depth.
+FIXTURE_REACH = 96.0
+
+
+def _overlap_fraction(one: Box, two: Box) -> float:
+    """Shared area over the smaller footprint, from the rotated extents.
+
+    An approximation: it compares axis-aligned bounds AFTER rotation rather
+    than intersecting two oriented rectangles. That is enough for advice —
+    a rotated crate reports a slightly generous overlap — and it keeps this a
+    few lines instead of a polygon clipper.
+    """
+    a, b = one.bounds(), two.bounds()
+    width = min(a[2], b[2]) - max(a[0], b[0])
+    height = min(a[3], b[3]) - max(a[1], b[1])
+    if width <= 0 or height <= 0:
+        return 0.0
+    smaller = min(
+        (a[2] - a[0]) * (a[3] - a[1]),
+        (b[2] - b[0]) * (b[3] - b[1]),
+    )
+    return 0.0 if smaller <= 0 else min(1.0, width * height / smaller)
+
+
+def _is_large(box: Box) -> bool:
+    return min(box.half_w, box.half_h) >= LARGE_HALF
+
+
+# Enough to show the habit without burying a reply in pairs.
+MAX_STACKS = 20
+
+
+def find_stacks(
+    objects: list[dict], *, overlap: float = STACK_OVERLAP, limit: int = MAX_STACKS
+) -> list[dict]:
+    """Large objects sitting on top of each other on the SAME layer.
+
+    Dressing a surface is how a map is furnished — a tankard on a table, bread
+    on a bench — and that is why object-versus-object overlap is not a defect
+    in general. Two crates in the same spot on the same layer is different: it
+    reads as assets dropped without looking, which is the complaint a viewer
+    actually makes. Layers separate the two cases, because something placed ON
+    a surface belongs on a higher layer than the surface.
+
+    Deliberate pairs land here too — a spit roast over a campfire, mushrooms
+    growing up a stalagmite — because nothing in the geometry tells them from
+    a crate dropped inside another. It is advice: look, then decide.
+    """
+    measured = []
+    for element in objects:
+        box = box_for(element)
+        if box is not None and _is_large(box):
+            measured.append((element, box))
+    found: list[dict] = []
+    for index, (one, box_one) in enumerate(measured):
+        for two, box_two in measured[index + 1 :]:
+            if int(one.get("layer", 0) or 0) != int(two.get("layer", 0) or 0):
+                continue
+            share = _overlap_fraction(box_one, box_two)
+            if share >= overlap:
+                found.append(
+                    {
+                        "ids": [int(one.get("id", -1)), int(two.get("id", -1))],
+                        "assets": [str(one.get("asset", "")), str(two.get("asset", ""))],
+                        "layer": int(one.get("layer", 0) or 0),
+                        "overlap": round(share, 2),
+                        "position": [round(box_one.cx), round(box_one.cy)],
+                    }
+                )
+    # Worst first, so a truncated list still shows the clearest cases.
+    found.sort(key=lambda item: item["overlap"], reverse=True)
+    return found[:limit]
+
+
+def find_adrift_fixtures(
+    objects: list[dict], walls: list[dict], *, reach: float = FIXTURE_REACH
+) -> list[dict]:
+    """Wall fixtures standing away from any wall.
+
+    A torch floating a tile from the wall, or a hearth that does not meet the
+    wall behind it, is one of the first things a viewer notices. Matching is by
+    asset NAME, so this is a prompt to look rather than a verdict: read the
+    reported distance and decide.
+    """
+    segments = _segments(walls)
+    if not segments:
+        return []
+    found: list[dict] = []
+    for element in objects:
+        asset = str(element.get("asset", ""))
+        name = asset.rsplit("/", 1)[-1].lower()
+        if not any(fixture in name for fixture in WALL_FIXTURES):
+            continue
+        box = box_for(element)
+        if box is None:
+            continue
+        nearest = min(
+            min(
+                box.distance_to(segment.x0, segment.y0),
+                box.distance_to(segment.x1, segment.y1),
+                box.distance_to((segment.x0 + segment.x1) / 2, (segment.y0 + segment.y1) / 2),
+            )
+            for segment in segments
+        )
+        if nearest > reach:
+            found.append(
+                {
+                    "id": int(element.get("id", -1)),
+                    "asset": asset,
+                    "position": [round(box.cx), round(box.cy)],
+                    "woxels_from_wall": round(nearest),
+                }
+            )
+    return found

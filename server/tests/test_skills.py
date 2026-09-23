@@ -1079,3 +1079,90 @@ def test_the_build_loop_plans_levels_and_roof_ridges():
     assert "takes an ID from `list_levels`, not a position" in prose
     assert "ridge line and a width, not an outline" in prose
     assert "sun_angle" in prose
+
+
+def test_variation_is_taught_where_placement_happens():
+    """The jitter rule lived only in material-language, a skill builders rarely
+    load, so interiors came out at scale 1.0 on quarter turns. It belongs in the
+    skills and the loop step that actually place objects."""
+    for path in (
+        "skills/_shared/build-loop.md",
+        "skills/battlemap-interiors/SKILL.md",
+        "skills/battlemap-environments/SKILL.md",
+    ):
+        prose = _prose(path)
+        assert "0.85" in prose and "1.15" in prose, path
+        assert "quarter turns" in prose, path
+    assert "arrangement_note" in _prose("skills/_shared/build-loop.md")
+
+
+def test_the_build_loop_sizes_the_map_to_the_scene():
+    """A small building on a mostly empty canvas reads as unfinished, and
+    set_map_size cannot fix it afterwards without moving the build."""
+    prose = _prose("skills/_shared/build-loop.md")
+    assert "Size the map to the scene" in prose
+    assert "keeps the top-left origin" in prose
+
+
+def test_art_direction_hands_off_to_the_placing_skill_before_placement():
+    """Builders that start from art direction often never load the skill that
+    carries the placement rules, and place everything at scale 1.0 on quarter
+    turns. Art direction must send them there, and keep the core rule inline."""
+    prose = _prose("skills/battlemap-art-direction/SKILL.md")
+    assert "(../battlemap-interiors/SKILL.md)" in prose
+    assert "(../battlemap-environments/SKILL.md)" in prose
+    assert "before placing" in prose.lower()
+    assert "0.85" in prose and "1.15" in prose
+    assert "arrangement_note" in prose
+
+
+def test_the_build_loop_says_to_act_on_an_arrangement_note():
+    prose = _prose("skills/_shared/build-loop.md")
+    assert "before the next batch" in prose
+
+
+def test_lighting_gives_reach_numbers_and_judges_ambient_by_eye():
+    """'Range scoped to the room' gave no numbers and builds came out with
+    pinprick pools, so reach has figures. Ambient does NOT: a prescribed
+    neutral mid-grey made maps read flatter than the dim ones it replaced, so
+    the rule is to choose deliberately and check legibility in a render."""
+    prose = _prose("skills/battlemap-lighting-hierarchy/SKILL.md")
+    assert "1.5-2" in prose and "3-5" in prose
+    assert "prove it in a render" in prose
+    assert "#adadad" not in prose
+
+
+def test_ground_uses_line_work_and_several_terrain_slots():
+    """Flat maps: no shadow or ink paths, one terrain texture everywhere."""
+    loop = _prose("skills/_shared/build-loop.md")
+    assert "search='shadow'" in loop and "search='line'" in loop
+    env = _prose("skills/battlemap-environments/SKILL.md")
+    assert "at least three terrain slots" in env
+    interiors = _prose("skills/battlemap-interiors/SKILL.md")
+    assert "search='shadow'" in interiors
+
+
+def test_the_build_loop_delivers_a_map_you_can_play_under_the_roof():
+    """A reviewer's complaint: "roofs are covering the content inside the
+    stalls - not a useful export". Knowing a roof hides the room is not the
+    same as knowing what to hand over."""
+    prose = _prose("skills/_shared/build-loop.md")
+    assert "played from inside" in prose
+    assert "two exports" in prose
+
+
+def test_the_build_loop_reads_the_care_findings():
+    prose = _prose("skills/_shared/build-loop.md")
+    assert "stacked" in prose and "adrift_fixtures" in prose
+
+
+def test_material_language_keeps_assets_in_their_own_job():
+    """ "A wall asset is being used as a stone pathway and looks awful"."""
+    prose = _prose("skills/battlemap-material-language/SKILL.md")
+    assert "the job it was drawn for" in prose
+
+
+def test_interiors_puts_the_building_in_a_world():
+    """ "There is no outside textures, just a tavern (no street or world)"."""
+    prose = _prose("skills/battlemap-interiors/SKILL.md")
+    assert "stops at its own walls" in prose

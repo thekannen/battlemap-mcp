@@ -39,6 +39,7 @@ MOD_ROOT = "battlemap-mcp-bridge"
 SERVER_FILES = (
     "__init__.py",
     "__main__.py",
+    "arrangement.py",
     "asset_packs.py",
     "asset_search.py",
     "bridge_client.py",

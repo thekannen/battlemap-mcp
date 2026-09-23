@@ -116,6 +116,27 @@ Then start a new conversation in your AI app and ask:
 
 The checker confirms the mod connection; this first prompt confirms your AI app can use it. Keep Dungeondraft and the map open while you work.
 
+### 5. Include your asset packs
+
+Maps come out noticeably better when the map includes asset packs. Without them the assistant has only Dungeondraft's built-in library of 1,792 assets, and that limits what it can make. Town and market scenes show it most: stalls, signs, goods, and street clutter run out of variety quickly.
+
+Dungeondraft includes packs **per map**, and a map's packs are fixed when the map is created. A pack you have installed is invisible to a map that does not include it, and an object placed from it would be dropped when the map reopens. There are two ways to include packs:
+
+- **When you create a map**, choose the packs you want in Dungeondraft's new-map window.
+- **For a map you already have**, open it and ask your assistant:
+
+  > List the asset packs I have installed and which ones this map includes. Suggest the packs that suit a busy market square, then make a copy of this map that includes the ones I approve.
+
+  The assistant saves your current map, writes a copy that includes the packs you chose, and opens that copy. Keep working in the copy.
+
+Pick packs that suit the scene rather than all of them: including a very large library is slow, and one big pack can crowd out the rest. This project does not supply art; buy packs from the people who make them.
+
+### Platform limits
+
+- **Windows:** the companion is unsigned, by choice. When you first open **Connect** or **Check connection**, Windows may warn you, for example with SmartScreen's **Windows protected your PC**. That is expected. If you downloaded both files from this project's [Releases](https://github.com/thekannen/battlemap-mcp/releases) page, choose **More info → Run anyway**. To confirm a download is the published one, compare `Get-FileHash <file>` in PowerShell with the release's `SHA256SUMS`. Do not turn off SmartScreen or other Windows security.
+- **macOS:** the companion is signed and notarized, but it ships as a `.tar.gz`, which cannot carry a stapled notarization ticket. macOS looks the ticket up online the first time the companion runs, so **be connected to the internet for the first launch**. Without a network, that first launch can be refused. See [macOS install](docs/install-packages.md#macos).
+- **Linux:** validated on Ubuntu 24.04 under WSL2 only. Native Linux desktops and other distributions have not been tested.
+
 ### If something does not work
 
 | What you see | What to do |
@@ -125,9 +146,10 @@ The checker confirms the mod connection; this first prompt confirms your AI app 
 | “Not connected yet” | Enable MCP Bridge, open a map, wait for loading, and close any Dungeondraft dialogs. Run the checker again. |
 | The checker reports an older/different bridge | Use both downloads from the same release, remove duplicate bridge copies, and fully quit and reopen Dungeondraft. |
 | The checker is ready, but the AI app cannot see Dungeondraft | Run the matching Connect file, finish any instructions it shows, then fully quit and reopen your AI app. |
-| Windows blocks the download | Windows builds are unsigned by choice. Report the warning to the maintainer; do not disable Windows security. |
+| Windows warns about the download or the Connect file | Expected: the Windows companion is unsigned. See [platform limits](#platform-limits). Choose **More info → Run anyway** only for files from this project's Releases page; do not disable Windows security. |
+| The assistant keeps using the same few objects | The map probably includes no asset packs. See [Include your asset packs](#5-include-your-asset-packs). |
 | You asked to see the map but no picture appeared | The assistant does see it, but your AI app folds images inside the tool call — expand the tool call to view it. The assistant is also given the saved file's location, so you can ask it for the file. |
-| macOS blocks the companion | Only happens on an unsigned build, and is not a crash. From Finder you get a "developer cannot be verified" dialog; from Terminal you get only `Killed: 9` and exit code 137, with no message. See [macOS install](docs/install-packages.md#macos), step 6. |
+| macOS blocks the companion | Not a crash. The signed companion needs an internet connection the first time it runs; connect and open it again. From Finder a block is a "cannot be verified" dialog; from Terminal it is only `Killed: 9` and exit code 137, with no message. See [macOS install](docs/install-packages.md#macos), step 6. |
 
 [Update, move, or uninstall](docs/install-packages.md#update-or-remove).
 
@@ -143,6 +165,7 @@ See [Privacy and local data](docs/PRIVACY.md) for what your AI client can receiv
 - [Developer installation](docs/developer-installation.md): run from source.
 - [Building releases](docs/releases.md): versioning and release packages.
 - [Contributing](CONTRIBUTING.md): development workflow and checks.
+- [Changelog](CHANGELOG.md): what changed in each release.
 - [Known limitations](docs/KNOWN_LIMITATIONS.md): editing constraints and release validation status.
 - [Documentation index](docs/README.md): installation and contributor references.
 

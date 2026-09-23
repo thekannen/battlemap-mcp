@@ -138,6 +138,7 @@ RULES_ON_TOOLS = {
     "get_status": ("saving.in_flight",),
     "export_map": ("Universal VTT",),
     "screenshot": ("give them that",),
+    "set_ambient_light": ("look at a render", "has to read"),
 }
 
 

@@ -2702,7 +2702,10 @@ func _save_directory() -> String:
 	var cfg = _read_config()
 	var dir = _normalise_dir(str(cfg.get("save_directory", "")))
 	if dir != "":
-		return dir
+
+		var cfg_dir = Directory.new()
+		if cfg_dir.dir_exists(dir):
+			return dir
 	if Global.Editor != null and Global.Editor.has_method("GetMapDirectory"):
 
 		var dd_dir = _normalise_dir(str(Global.Editor.GetMapDirectory()))
@@ -2750,11 +2753,18 @@ func _get_save_directory(req : Dictionary) -> Dictionary:
 	var configured = str(cfg.get("save_directory", ""))
 	var effective = _save_directory()
 	var d = Directory.new()
-	return _ok({ "configured": configured, "effective": effective,
+	var configured_missing = (configured != ""
+		and not d.dir_exists(_normalise_dir(configured)))
+	var out = { "configured": configured, "effective": effective,
 		"exists": effective != "" and d.dir_exists(effective),
-		"source": ("setting" if configured != ""
+		"source": ("setting" if configured != "" and not configured_missing
 			else "Dungeondraft's map directory / " + SAVE_SUBDIR),
-		"config_file": ProjectSettings.globalize_path(CONFIG_FILE) })
+		"configured_missing": configured_missing,
+		"config_file": ProjectSettings.globalize_path(CONFIG_FILE) }
+	if configured_missing:
+		out["note"] = ("the configured save directory no longer exists, so saves go to "
+			+ effective + " — set_save_directory with a new path, or \"\" to clear it")
+	return _ok(out)
 
 func _set_save_directory(req : Dictionary) -> Dictionary:
 	var dir = _normalise_dir(str(req.get("path", "")))
@@ -2828,6 +2838,8 @@ func _save_map(req : Dictionary) -> Dictionary:
 	if not d.dir_exists(dir):
 		return _err("save directory does not exist: " + dir)
 	var target = dir + "/" + name
+	var configured_dir = _normalise_dir(str(_read_config().get("save_directory", "")))
+	var fell_back = configured_dir != "" and not d.dir_exists(configured_dir)
 
 	var f = File.new()
 	if f.file_exists(target) and target != current and not bool(req.get("overwrite", false)):
@@ -2836,7 +2848,10 @@ func _save_map(req : Dictionary) -> Dictionary:
 			"open. Choose another name, or pass overwrite=true if you really " +
 			"mean to replace it.") % [name, ("nothing open" if current == "" else current)])
 
-	return _do_save(target, "configured directory")
+	# Say which directory was used when it is not the one that was configured,
+	# so a save landing somewhere unexpected explains itself in the reply.
+	return _do_save(target, ("default directory — the configured one is gone"
+		if fell_back else "configured directory"))
 
 func _current_map_file() -> String:
 	if Global.Editor == null:

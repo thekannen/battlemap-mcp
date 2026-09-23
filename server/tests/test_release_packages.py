@@ -226,3 +226,27 @@ def test_is_macho_detects_real_binaries(tmp_path):
     assert release.is_macho(macho) is True
     assert release.is_macho(plain) is False
     assert release.is_macho(missing) is False
+
+
+def test_changelog_leads_with_the_current_version():
+    """A release whose changelog stops at the previous version tells users
+    nothing about what they just installed, and nothing else catches it."""
+    import re
+
+    from battlemap_mcp import __version__
+
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    versions = re.findall(r"^## (\d+\.\d+\.\d+)", changelog, flags=re.MULTILINE)
+    assert versions, "no version headings in CHANGELOG.md"
+    assert versions[0] == __version__, (
+        f"changelog starts at {versions[0]}, package is {__version__}"
+    )
+
+
+def test_changelog_ships_to_users():
+    """Only checkable where the exporter lives: the published tree has no
+    manifest, and the changelog's presence there is the proof anyway."""
+    manifest_path = ROOT / "tools" / "public_export_manifest.json"
+    if not manifest_path.exists():
+        pytest.skip("no export manifest here; this is the published tree")
+    assert "CHANGELOG.md" in json.loads(manifest_path.read_text())

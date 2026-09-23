@@ -74,6 +74,26 @@ from one thing instead:
 A zone is finished when someone can say what happens there without being told.
 If it needs a caption, the anchor is not carrying enough support.
 
+**A building that stops at its own walls reads as a cutout.** Unless the brief
+is explicitly an interior-only map, give it the ground it stands on and a few
+tiles of the world outside: the approach, a yard, a neighbour's wall, the road
+it faces. A tavern floating on blank canvas is the first thing a viewer
+notices, before any of the furnishing inside it. The
+[environments](../battlemap-environments/SKILL.md) skill covers siting a
+building.
+
+**Give the walls depth.** A thin shadow path run along the inside of each
+wall, and under a gallery or a bar's overhang, lifts a room off the page; find
+one with `list_assets(category='Paths', search='shadow')`. Keep it narrow and
+continuous rather than a strip of dark paint.
+
+**Leave fixtures square and vary everything else.** A bed, a shelf run or a
+counter belongs squared to its wall. Chairs, stools, tableware, sacks and
+crates do not: give each a slightly different scale (about 0.85-1.15) and a few
+degrees of turn. A room at exactly 1.0 and quarter turns reads as a showroom
+rather than a place in use. Set the variation in the placing call, not in a
+repair pass afterwards.
+
 ## Use the walls
 
 Real interiors lean on their edges. Benches sit against walls, shelving and

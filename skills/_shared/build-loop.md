@@ -67,10 +67,18 @@ first. Decide each of these explicitly, and say which you chose:
 1. **Structure** — `generate_dungeon` for a dungeon, `dig_cave` for a cavern,
    `build_room` for a walled building, or open terrain with no structure at all.
    Decide the map size, how many levels, and whether roofs are part of the
-   deliverable, now rather than later.
+   deliverable, now rather than later. **Size the map to the scene**: a small
+   building in the middle of a mostly empty canvas reads as unfinished at play
+   scale. Either plan surroundings out to the edges, or set the size first —
+   `set_map_size` keeps the top-left origin and does not move what is placed,
+   so shrinking it afterwards cuts into a centred build.
 2. **Surfaces** — a terrain slot for ground that must BLEND, `place_pattern`
    for a tiled floor, `draw_path`/`paint_path` for a trail, fence line or
-   shadow strip, `add_water` for actual water. Name the tool, not just the
+   shadow strip, `add_water` for actual water. Plan the line work too: a
+   shadow path along the inside of walls and under overhangs, and an ink line
+   where an edge needs definition — a dais, a cliff lip, a pit. Find them with
+   `list_assets(category='Paths', search='shadow')` and `search='line'`; a map
+   with no line work reads flat. Name the tool, not just the
    look: they are different systems and cannot be converted into one another
    afterwards.
 3. **Repeated units** — check `list_prefabs` before hand-composing anything
@@ -193,6 +201,13 @@ Compare them rather than eyeballing: `get_element` on a roof returns its
 reaches past the wall it belongs to, fix the ridge or the width. Then capture
 the interior with the roof in place — the map is delivered with it, and a room
 nobody can see is not furnished.
+
+**A battlemap is played from inside, so decide what the roof leaves visible.**
+A roof that covers a furnished room makes the export useless for play: the
+party stands in a space nobody can see. Either keep roofs to overhangs,
+awnings and porches that frame the interior without hiding it, or deliver two
+exports — one with roofs for the establishing view, one without for play — and
+say which is which when you hand them over.
 
 **Then prove the structure before you furnish anything.** Call
 `validate_floorplan`. It is read-only, and it answers what element counts
@@ -333,6 +348,13 @@ pass, and look at the cluster in a screenshot before moving on.
 `preview_assets` tells you what an asset looks like while you are CHOOSING.
 Nothing tells you how it reads once placed except looking at it in context.
 
+**Vary what you place.** Fixtures that belong squared to a wall stay square;
+give everything else a slightly different scale (about 0.85-1.15) and a few
+degrees off the quarter turns, in the call that places it. A `place_objects`
+batch that comes back rigid carries an `arrangement_note` saying so; adjust
+that batch with `modify_object` before the next batch, not in a later pass.
+`validate_scene` reports the share for the whole map under `arrangement`.
+
 **Then prove the furniture before you light it.** Call `validate_placements`.
 Phase 3 proved the shell was sound; this proves the furniture respects it —
 objects crossing a wall, or standing in a doorway or across a window. Those
@@ -340,9 +362,13 @@ look correct in every element count and in the response to the call that placed
 them, and they are only obvious in a render, where it is tempting to judge by
 eye and call it fixed without measuring.
 
-It deliberately says nothing about objects overlapping each other: a tankard on
-a table is correct placement, and reporting it would bury the real findings
-under every dressed surface on the map.
+It says nothing about a dressed surface — a tankard on a table is correct —
+but read its `stacked` and `adrift_fixtures` lists, which are advice rather
+than failures. `stacked` is two large objects in one place on one layer, which
+is what "assets thrown on without care" looks like from the outside.
+`adrift_fixtures` is a torch, tapestry or hearth standing away from the wall
+it should be mounted on. Both are matched roughly, so look before you move
+anything.
 
 Treat a finding as evidence, not a verdict — read the reported `bounds` and
 decide. A hearth set into a thick wall is a deliberate choice this will report;

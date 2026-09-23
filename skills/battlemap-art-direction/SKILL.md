@@ -29,6 +29,20 @@ on.
 
 Do not place anything until the plan is coherent.
 
+**Load the placing skill before placing anything.** This skill plans; it does
+not carry the placement rules. Before the first object goes down, load
+[interiors](../battlemap-interiors/SKILL.md) for rooms and
+[environments](../battlemap-environments/SKILL.md) for ground and
+exteriors — both, for a building with a site. The two rules that matter most
+from the first call:
+
+- **Vary what is not a fixture.** Keep beds, shelf runs and counters squared to
+  their walls; give everything else a scale of about 0.85-1.15 and a few degrees
+  off the quarter turns. If a placement result carries an `arrangement_note`,
+  fix that batch before placing more.
+- **Size the map to the scene** before laying out, or plan surroundings out to
+  its edges.
+
 ## Build and finish
 
 Follow the shared [build loop](../_shared/build-loop.md). Use the environment

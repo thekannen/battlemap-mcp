@@ -110,6 +110,14 @@ squared perfectly to the walls reads as unused, while a few degrees of angle
 reads as something people move around. Mirroring is a weak variation and rarely
 worth reaching for.
 
+## Use an asset for the job it was drawn for
+
+Assets carry their category's intent: a Walls texture has ends and a run, a
+Paths texture flows, a Terrain material tiles in every direction. Pressed into
+another role the drawing fights the use — a wall texture laid as a garden path
+reads as a wall lying on the ground, however good the colour match. Search the
+category that does the job before borrowing from one that does not.
+
 ## Check the first instance before repeating it
 
 Scale is not normalised across assets: the same `1.0` can be a sliver of a tile

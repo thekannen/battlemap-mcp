@@ -19,6 +19,18 @@ to every asset.
 Tint ambient when the brief calls for a pervasive condition — moonlight, fog, a
 strange sky — and expect to compensate in the sources.
 
+**Choose the ambient the brief asks for, then prove it in a render.** A dim
+warm tavern, a cold night exterior and an evenly lit hall are all legitimate;
+mood comes from the contrast between a lit zone and a dark one, so an even
+ambient is not automatically the safer choice. A fresh map's white is flat
+glare rather than daylight — decide rather than leave it.
+
+What is not optional is legibility. After the ambient and the sources are
+set, look at a render: every zone you expect play in has to read at the table.
+A room that is atmospheric in a close-up and a black box at map zoom has the
+ambient too low for the sources it has — raise it, or give the dark zones a
+source, rather than splitting the difference everywhere.
+
 ## Make lighting choices intentional
 
 Treat a departure from these as a decision you should be able to justify:
@@ -27,7 +39,10 @@ Treat a departure from these as a decision you should be able to justify:
 - **Intensity at its default.** Distance and range do the shaping. Reach for
   stacked sources in one spot before an unusual intensity when you want a hot
   centre.
-- **Range scoped to the room, not the map.** A source lights what it stands in.
+- **Range scoped to the room, not the map.** A source lights what it stands in,
+  and reaches the space it serves: about 1.5-2 for a candle, 3-5 for a
+  lantern, torch, brazier or hearth. A room of range-2 lanterns reads as
+  pinpricks in the dark; fewer sources with honest reach read as a lit room.
 - **A limited palette.** Keep light colours few enough that a threshold or a
   special condition remains distinct.
 

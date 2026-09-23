@@ -39,6 +39,11 @@ Set a [lighting hierarchy](../battlemap-lighting-hierarchy/SKILL.md) before
 adding sources so weather, route choices, and the landmark use darkness and
 contrast deliberately.
 
+Use at least three terrain slots for open ground — a base, a worn or dry
+variant where feet and wheels go, and a third for damp, moss or stone — and
+blend them where they meet. One texture across the whole map reads as a
+placeholder however well the objects sit on it.
+
 1. Use `list_assets` to find only the terrain, water, vegetation and landmark
    families that fit the style bible.
 2. Establish terrain layering with broad ground regions first. Treat water and
@@ -199,6 +204,10 @@ stamped however few there are — and a large `min_gap` in `scatter_objects`
 produces exactly that, because it enforces even spacing. To make a region
 sparse, place *fewer clusters* rather than the same count spread evenly: keep
 `min_gap` small inside a cluster and leave real ground between clusters.
+
+Hand-placed rocks, logs and plants need the same variation `scatter_objects`
+gives for free: a scale spread of about 0.85-1.15 at least, and angles off the
+quarter turns. One size at one angle reads as stamped, however well spaced.
 
 Capture a `screenshot` at encounter scale and use `export_map` for the
 whole-map check. Run the
