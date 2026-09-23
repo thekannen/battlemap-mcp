@@ -21,6 +21,9 @@ class ClientRegistrationResult:
     registered: bool
     manual_command: list[str] | None
     client_cli_available: bool = False
+    # The command of a Claude Code user entry that already holds this name,
+    # which `claude mcp add` refuses to replace.
+    existing_command: str | None = None
 
 
 def registration_argv(client: str, executable: Path) -> list[str]:
@@ -87,17 +90,33 @@ def register_client(
             registered=True, manual_command=None, client_cli_available=True
         )
     return ClientRegistrationResult(
-        registered=False, manual_command=command, client_cli_available=True
+        registered=False,
+        manual_command=command,
+        client_cli_available=True,
+        existing_command=_claude_registered_command() if client == "claude-code" else None,
     )
+
+
+def _claude_user_entry() -> Any:
+    config = json.loads(
+        claude_registry_paths()["Claude Code (user scope)"].read_text(encoding="utf-8")
+    )
+    return config["mcpServers"]["battlemap"]
+
+
+def _claude_registered_command() -> str | None:
+    """The command an existing Claude Code user entry runs, if there is one."""
+    try:
+        command = _claude_user_entry().get("command")
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    return command if isinstance(command, str) and command else None
 
 
 def _claude_launcher_matches(executable: Path) -> bool:
     """A repeated setup need not remove an already-correct user entry."""
     try:
-        config = json.loads(
-            claude_registry_paths()["Claude Code (user scope)"].read_text(encoding="utf-8")
-        )
-        entry = config["mcpServers"]["battlemap"]
+        entry = _claude_user_entry()
         return (
             entry.get("type", "stdio") == "stdio"
             and entry.get("args", []) == []

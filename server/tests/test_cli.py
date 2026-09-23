@@ -577,6 +577,61 @@ def test_setup_registration_failure_is_nonzero(monkeypatch, tmp_path, capsys, av
     assert "codex mcp add" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("old_exists", [True, False])
+def test_setup_names_an_existing_claude_registration(monkeypatch, tmp_path, capsys, old_exists):
+    """v1.0.0 said "If ... already registered" while knowing it was."""
+    from battlemap_mcp import cli
+    from battlemap_mcp.client_config import ClientRegistrationResult
+
+    old = tmp_path / "Old Companion" / "battlemap-mcp.exe"
+    if old_exists:
+        old.parent.mkdir()
+        old.write_bytes(b"")
+    monkeypatch.setattr(
+        cli.client_config,
+        "register_client",
+        lambda *_: ClientRegistrationResult(
+            False, ["claude", "mcp", "add"], True, existing_command=str(old)
+        ),
+    )
+    assert cli.main(["setup", "--client", "claude-code", "--yes"]) == 1
+    output = capsys.readouterr().out
+    assert 'already has a connection named "battlemap"' in output
+    assert str(old) in output
+    assert "claude mcp remove --scope user battlemap" in output
+    assert "If battlemap is already registered" not in output
+    assert ("no longer exists" in output) is not old_exists
+
+
+def test_setup_reports_kept_skills_instead_of_claiming_installation(monkeypatch, tmp_path, capsys):
+    from battlemap_mcp import cli
+    from battlemap_mcp.client_config import ClientRegistrationResult
+
+    monkeypatch.setattr(
+        cli.client_config, "register_client", lambda *_: ClientRegistrationResult(True, None)
+    )
+    launcher = tmp_path / "companion.exe"
+    args = ["setup", "--client", "claude-code", "--server-executable", str(launcher), "--yes"]
+    assert cli.main(args) == 0
+    assert "Installed Claude Code skills" in capsys.readouterr().out
+
+    assert cli.main(args) == 0
+    assert "already current" in capsys.readouterr().out
+
+    skill = tmp_path / "claude" / "skills" / "battlemap-interiors" / "SKILL.md"
+    skill.write_text("older version")
+    assert cli.main(args) == 0
+    output = capsys.readouterr().out
+    assert "Installed Claude Code skills" not in output
+    assert "Kept 1 existing" in output
+    assert "battlemap-interiors" in output
+    # A folder plus a relative command works in cmd and PowerShell alike; a
+    # quoted absolute path is a parse error in PowerShell.
+    assert str(launcher.parent) in output
+    assert f"{launcher.name} setup --force --client claude-code" in output
+    assert skill.read_text() == "older version"
+
+
 def test_version_is_available_offline(capsys):
     from battlemap_mcp import __version__, cli
 

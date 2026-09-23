@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "battlemap-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Build battle maps in a running Dungeondraft instance, with art-direction skills for composing them.",
   "author": {
     "name": "thekannen",

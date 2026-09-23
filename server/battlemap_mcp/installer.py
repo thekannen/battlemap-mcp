@@ -59,6 +59,8 @@ class CodexSkillsInstallResult:
     destination: Path
     installed: tuple[Path, ...]
     backups: tuple[Path, ...]
+    # Existing skills left in place (no --force) that differ from this version.
+    kept: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -321,25 +323,28 @@ def claude_code_skills_dir() -> Path:
 def inspect_skills(destination: Path) -> dict[str, str]:
     """Compare every bundled file, including shared references, without writing."""
     source = Path(skills_payload_root())
-    report = {}
-    for directory in sorted(path for path in source.iterdir() if path.is_dir()):
-        target = destination / directory.name
-        try:
-            files = [path for path in directory.rglob("*") if path.is_file()]
-            if not target.is_dir() or any(
-                not (target / path.relative_to(directory)).is_file() for path in files
-            ):
-                report[directory.name] = "missing or incomplete"
-            elif any(
-                path.read_bytes() != (target / path.relative_to(directory)).read_bytes()
-                for path in files
-            ):
-                report[directory.name] = "differs from bundled version"
-            else:
-                report[directory.name] = "current"
-        except OSError:
-            report[directory.name] = "unreadable"
-    return report
+    return {
+        directory.name: _skill_state(directory, destination / directory.name)
+        for directory in sorted(path for path in source.iterdir() if path.is_dir())
+    }
+
+
+def _skill_state(directory: Path, target: Path) -> str:
+    """Compare one bundled skill folder with an installed copy."""
+    try:
+        files = [path for path in directory.rglob("*") if path.is_file()]
+        if not target.is_dir() or any(
+            not (target / path.relative_to(directory)).is_file() for path in files
+        ):
+            return "missing or incomplete"
+        if any(
+            _content_digest(path) != _content_digest(target / path.relative_to(directory))
+            for path in files
+        ):
+            return "differs from bundled version"
+        return "current"
+    except OSError:
+        return "unreadable"
 
 
 def plan_install(mods_dir: Path, now: datetime, *, state_dir: Path) -> InstallPlan:
@@ -498,10 +503,16 @@ def apply_codex_skills_install(
     for source, destination in selected:
         copytree(source, destination)
 
+    kept = tuple(
+        destination
+        for source, destination in zip(plan.source_directories, destinations, strict=True)
+        if (source, destination) not in selected and _skill_state(source, destination) != "current"
+    )
     return CodexSkillsInstallResult(
         destination=plan.destination,
         installed=tuple(destination for _, destination in selected),
         backups=backups,
+        kept=kept,
     )
 
 
@@ -542,9 +553,12 @@ def doctor(mods_dir: Path, *, state_dir: Path, _payload: Path | None = None) -> 
         )
 
     installed = _file_hashes(destination)
-    payload = _file_hashes(Path(str(_payload if _payload is not None else payload_root())))
+    # Line endings are ignored, as the live identity check does: v1.0.0's
+    # Windows companion bundled a CRLF payload while the mod ZIP was LF.
+    installed_content = _content_hashes(destination)
+    payload = _content_hashes(Path(str(_payload if _payload is not None else payload_root())))
     current = bool(payload) and all(
-        installed.get(name) == digest for name, digest in payload.items()
+        installed_content.get(name) == digest for name, digest in payload.items()
     )
 
     records_path = state_dir / "battlemap-mcp" / "installs.json"
@@ -680,6 +694,23 @@ def _file_hashes(directory: Path) -> dict[str, str]:
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             hashes[str(path.relative_to(directory))] = digest
     return hashes
+
+
+def _content_digest(path: Path) -> str:
+    """Hash a payload file without its CRs, so a CRLF copy matches its LF source."""
+    return hashlib.sha256(path.read_bytes().replace(b"\r", b"")).hexdigest()
+
+
+def _content_hashes(directory: Path) -> dict[str, str]:
+    """Like _file_hashes, but line-ending-insensitive; for "same version?" only.
+
+    Install records keep exact bytes, so an edit is still an edit.
+    """
+    return {
+        str(path.relative_to(directory)): _content_digest(path)
+        for path in sorted(directory.rglob("*"))
+        if path.is_file()
+    }
 
 
 def _destination_token(destination: Path) -> str:

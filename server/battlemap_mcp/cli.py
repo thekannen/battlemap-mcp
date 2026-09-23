@@ -191,7 +191,7 @@ def dispatch_installer(args: argparse.Namespace) -> int:
     print(f"installed: {result.destination}")
     if skills_plan is not None:
         try:
-            installer.apply_codex_skills_install(skills_plan, force=args.force)
+            skills = installer.apply_codex_skills_install(skills_plan, force=args.force)
         except installer.InstallConflictError as exc:
             print(
                 f"Bridge was installed, but {client_label} skills were not updated: {exc}",
@@ -205,13 +205,17 @@ def dispatch_installer(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-        print(f"{client_label} skills installed: {skills_plan.destination}")
+        _report_skills(client_label, skills, executable, args.client)
     registration = client_config.register_client(
         args.client,
         executable,
     )
     if registration.manual_command is not None:
         client_label = "Codex" if args.client == "codex" else "Claude Code"
+        if registration.existing_command is not None:
+            print(f"{client_label} CLI registration failed.")
+            _explain_existing_registration(registration.existing_command, "install")
+            return 1
         if registration.client_cli_available:
             print(f"{client_label} CLI registration failed. Run:")
         else:
@@ -266,21 +270,21 @@ def _setup(args: argparse.Namespace) -> int:
     except (installer.InstallConflictError, OSError) as exc:
         print(f"Skills installation failed at {destination}: {exc}", file=sys.stderr)
         return 1
-    print(f"Skills installed: {result.destination}")
+    client_label = "Codex" if args.client == "codex" else "Claude Code"
+    _report_skills(client_label, result, executable, args.client)
     registration = client_config.register_client(args.client, executable)
     if not registration.registered:
         reason = "failed" if registration.client_cli_available else "was not available"
         print(f"Automatic connection to {args.client} {reason}.")
+        if registration.existing_command is not None:
+            _explain_existing_registration(registration.existing_command, "this Connect file")
+            return 1
         if args.client == "codex":
             print("You can connect in the app without installing a command-line tool:")
             print("Settings > MCP servers > Add server; choose STDIO.")
             print("Name: battlemap")
             print(f"Command: {executable}")
             print("Leave arguments empty, save, then restart the connection.")
-        else:
-            print("If battlemap is already registered at an old location, remove that entry:")
-            print("claude mcp remove --scope user battlemap")
-            print("Then run this Connect file again. Keep your old companion until it succeeds.")
         print("If the client command-line tool is available, you can also run:")
         print(_display_command(registration.manual_command or command))
         return 1
@@ -288,6 +292,41 @@ def _setup(args: argparse.Namespace) -> int:
     print("Setup complete. Fully quit and reopen your AI client to load the connection.")
     print("In Dungeondraft, enable Battlemap MCP Bridge and open a map before using it.")
     return 0
+
+
+def _report_skills(
+    label: str,
+    result: installer.CodexSkillsInstallResult,
+    executable: Path,
+    client: str,
+) -> None:
+    """Say what happened: existing skills are kept, not replaced, without --force."""
+    if result.installed:
+        print(f"Installed {label} skills in {result.destination}.")
+    if result.kept:
+        names = ", ".join(path.name for path in result.kept)
+        print(f"Kept {len(result.kept)} existing {label} skill folders that differ from this")
+        print(f"version, in case they hold your own edits: {names}")
+        print("To replace them (your copies are backed up first), open a terminal in:")
+        print(f"  {executable.parent}")
+        print("and run:")
+        prefix = ".\\" if sys.platform == "win32" else "./"
+        print(f"  {prefix}{executable.name} setup --force --client {client}")
+    elif not result.installed:
+        print(f"{label} skills are already current in {result.destination}.")
+
+
+def _explain_existing_registration(command: str, retry: str) -> None:
+    """Name the entry `claude mcp add` refused to replace, instead of guessing."""
+    print('Claude Code already has a connection named "battlemap", which runs:')
+    print(f"  {command}")
+    if not Path(command).exists():
+        print("That file no longer exists, so the old connection cannot start.")
+    print("Setup does not replace another connection by itself. Remove the old one:")
+    print("claude mcp remove --scope user battlemap")
+    print(f"Then run {retry} again.")
+    if Path(command).exists():
+        print("Keep the old companion until this succeeds.")
 
 
 def _brief_doctor(report: installer.DoctorReport, *, live: bool) -> int:

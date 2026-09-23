@@ -434,6 +434,80 @@ def test_an_unrecorded_copy_of_this_package_is_healthy(tmp_path):
     assert doctor(mods_dir, state_dir=tmp_path / "state").status == "healthy"
 
 
+def test_a_crlf_copy_of_this_package_is_healthy(tmp_path):
+    """v1.0.0: the Windows companion bundled a CRLF bridge, the mod ZIP was LF,
+    and Check connection called every correct manual install broken."""
+    from shutil import copytree
+
+    from battlemap_mcp.installer import doctor, payload_root
+
+    crlf_payload = tmp_path / "crlf-payload"
+    copytree(Path(str(payload_root())), crlf_payload)
+    for path in crlf_payload.rglob("*"):
+        if path.is_file():
+            path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+    mods_dir = tmp_path / "mods"
+    copytree(Path(str(payload_root())), mods_dir / "battlemap-mcp-bridge")
+
+    report = doctor(mods_dir, state_dir=tmp_path / "state", _payload=crlf_payload)
+    assert report.status == "healthy"
+
+
+def test_an_unrecorded_bridge_with_different_content_is_still_unknown(tmp_path):
+    from shutil import copytree
+
+    from battlemap_mcp.installer import doctor, payload_root
+
+    mods_dir = tmp_path / "mods"
+    destination = mods_dir / "battlemap-mcp-bridge"
+    copytree(Path(str(payload_root())), destination)
+    script = destination / "scripts" / "tools" / "mcp_bridge.gd"
+    script.write_bytes(script.read_bytes() + b"\n# someone else's change\n")
+    assert doctor(mods_dir, state_dir=tmp_path / "state").status == "unknown"
+
+
+def test_skill_inspection_ignores_line_endings(monkeypatch, tmp_path):
+    from shutil import copytree
+
+    from battlemap_mcp import installer
+
+    crlf_payload = tmp_path / "crlf-skills"
+    copytree(Path(str(installer.skills_payload_root())), crlf_payload)
+    for path in crlf_payload.rglob("*"):
+        if path.is_file():
+            path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+    target = tmp_path / "claude" / "skills"
+    installer.install_codex_skills(target, FIXED_NOW, force=False)
+    monkeypatch.setattr(installer, "skills_payload_root", lambda: crlf_payload)
+    assert set(installer.inspect_skills(target).values()) == {"current"}
+
+
+def test_skills_install_reports_which_existing_skills_it_kept(tmp_path):
+    """Setup preserves existing skills; it must say which ones differ, not claim
+    to have installed them."""
+    from battlemap_mcp.installer import (
+        apply_codex_skills_install,
+        install_codex_skills,
+        plan_codex_skills_install,
+    )
+
+    target = tmp_path / "claude" / "skills"
+    install_codex_skills(target, FIXED_NOW, force=False)
+    (target / "battlemap-interiors" / "SKILL.md").write_text("older version")
+    (target / "battlemap-art-direction").rename(tmp_path / "moved-away")
+
+    result = apply_codex_skills_install(plan_codex_skills_install(target, FIXED_NOW), force=False)
+
+    assert [path.name for path in result.installed] == ["battlemap-art-direction"]
+    assert [path.name for path in result.kept] == ["battlemap-interiors"]
+    assert (target / "battlemap-interiors" / "SKILL.md").read_text() == "older version"
+
+    forced = apply_codex_skills_install(
+        plan_codex_skills_install(target, FIXED_NOW.replace(hour=13)), force=True
+    )
+    assert forced.kept == ()
+
+
 def test_skill_inspection_detects_missing_shared_files_and_changed_skills(tmp_path):
     from battlemap_mcp.installer import inspect_skills, install_codex_skills
 

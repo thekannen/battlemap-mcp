@@ -1,0 +1,7 @@
+# Release payloads must be byte-identical on every build host. Without this a
+# Windows runner checks them out as CRLF, and v1.0.0's Windows companion
+# bundled a CRLF bridge while the mod ZIP (built on Linux) was LF — so Check
+# connection reported every correct manual install as needing attention.
+# tools/release.py refuses to build if these ever contain a CR again.
+mod/** text=auto eol=lf
+skills/** text=auto eol=lf

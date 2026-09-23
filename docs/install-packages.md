@@ -208,8 +208,9 @@ route follows [OpenAI's instructions](https://developers.openai.com/codex/mcp/).
 
 **Claude Code:** Connect uses the `claude` command-line tool. It does not configure
 the Claude chat app. Running Connect again at the same location is harmless.
-If an existing user entry points to an older companion, remove that one entry
-before running Connect again:
+If an existing user entry points to an older companion, Connect stops, shows
+the command that entry runs, and says whether that file still exists. Remove
+that one entry before running Connect again:
 
 ```text
 claude mcp remove --scope user battlemap
@@ -232,8 +233,9 @@ do not mix a new executable with old `_internal` files. Keeping the same permane
 path means the existing registration still works. Run the Connect file again,
 reopen Dungeondraft and a map, and run Check connection.
 
-Connect preserves existing skills. To replace locally edited or older skills too,
-open a terminal in the companion folder and run:
+Connect preserves existing skills and lists any that differ from this version.
+To replace locally edited or older skills too, open a terminal in the companion
+folder and run:
 
 ```powershell
 .\battlemap-mcp.exe setup --force --client codex

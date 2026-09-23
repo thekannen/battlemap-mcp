@@ -177,9 +177,27 @@ def validate_tree(base, allowed=None, artifacts=frozenset()):
             raise ValueError(f"Unexpected payload file: {path.relative_to(base)}")
 
 
+def require_lf(base, names):
+    """Refuse CR bytes, so every host bundles the same payload bytes.
+
+    The companion is frozen on each platform's own checkout while the mod ZIP
+    comes from the Linux job. v1.0.0's Windows runner converted to CRLF, and
+    `smoke` compared that payload with the same converted checkout, so nothing
+    noticed until the installed mod failed the checker. .gitattributes keeps
+    these LF; this is what fails the build if it stops doing so.
+    """
+    for name in names:
+        if b"\r" in (base / name).read_bytes():
+            raise ValueError(
+                f"CRLF line endings in release payload {name}; "
+                "check out with the repository's .gitattributes"
+            )
+
+
 def build_mod(root, out, version):
     base = root / "mod" / MOD_ROOT
     validate_tree(base, MOD_FILES, MOD_ARTIFACTS)
+    require_lf(base, MOD_FILES)
     out.mkdir(parents=True, exist_ok=True)
     archive = out / f"battlemap-mcp-mod-{version}.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zipped:
@@ -464,6 +482,7 @@ def build(
     out.mkdir(parents=True, exist_ok=True)
     artifacts = [build_mod(root, out, version)]
     validate_tree(root / "skills", SKILL_FILES)
+    require_lf(root / "skills", SKILL_FILES)
     with tempfile.TemporaryDirectory(prefix="dd-mcp-build-") as temporary:
         work = Path(temporary)
         # Stage explicit source inputs, never freeze the developer environment.

@@ -42,6 +42,42 @@ def test_claude_repeat_setup_keeps_matching_registration_without_cli(monkeypatch
     assert registry.read_bytes() == original
 
 
+def test_claude_failure_names_the_entry_already_registered(monkeypatch, tmp_path):
+    """`claude mcp add` refuses an existing name; setup must say which entry."""
+    import json
+
+    from battlemap_mcp import client_config
+
+    old = tmp_path / "Old Companion" / "battlemap-mcp.exe"
+    (tmp_path / ".claude.json").write_text(
+        json.dumps({"mcpServers": {"battlemap": {"type": "stdio", "command": str(old)}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(client_config.shutil, "which", lambda command: f"/usr/bin/{command}")
+
+    def refuse(*_args, **_kwargs):
+        return SimpleNamespace(returncode=1, stdout="", stderr="already exists in user config")
+
+    result = client_config.register_client("claude-code", tmp_path / "new.exe", refuse)
+    assert not result.registered
+    assert result.existing_command == str(old)
+
+
+def test_claude_failure_without_an_entry_reports_none(monkeypatch, tmp_path):
+    from battlemap_mcp import client_config
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(client_config.shutil, "which", lambda command: f"/usr/bin/{command}")
+    result = client_config.register_client(
+        "claude-code",
+        tmp_path / "new.exe",
+        lambda *_a, **_k: SimpleNamespace(returncode=1, stdout="", stderr="other failure"),
+    )
+    assert not result.registered
+    assert result.existing_command is None
+
+
 def test_registration_commands_use_supported_user_scoped_cli_vectors():
     """Client setup must use CLIs rather than editing client settings files."""
     from battlemap_mcp.client_config import registration_argv

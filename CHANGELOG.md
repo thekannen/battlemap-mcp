@@ -4,6 +4,27 @@ What changed in each release, written for the people using it. Versions cover
 the companion, the Dungeondraft mod and the map-making skills together; the
 wire protocol between them is versioned separately and is currently 25.
 
+## 1.0.1 — 2026-09-23
+
+Fixes for installing on Windows.
+
+**Check connection trusts a correct install.** On Windows, Check connection
+reported a correctly installed mod as needing attention, because the companion
+and the mod download stored the same bridge files with different line endings.
+Both downloads now carry identical files, and the check no longer counts line
+endings as a difference.
+
+**Connect explains an existing Claude Code connection.** When Claude Code
+already has a `battlemap` connection from an earlier install, Connect now
+shows the command that connection runs, says whether that file still exists,
+and gives the one command that removes it. Previously it only guessed that an
+old entry might be in the way.
+
+**Connect says which skills it kept.** Skills from an earlier install that
+differ from this version are left in place, in case they hold your own edits.
+Connect used to report them as installed anyway; it now names the skills it
+kept and shows the command that updates them, backing up your copies first.
+
 ## 1.0.0 — 2026-09-22
 
 The first public release.

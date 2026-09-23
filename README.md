@@ -100,7 +100,9 @@ If you are replacing an older bridge, save your map and fully quit Dungeondraft 
    depending on which app you use. These files end in `.cmd`; Windows may hide
    the extension. They connect the app and add the included map-making skills.
 4. Look for **Setup complete**, then close the window. Fully quit and reopen
-   your AI app so it picks up the connection.
+   your AI app so it picks up the connection. If the window says Claude Code
+   **already has a connection** instead, an earlier install is still registered:
+   see [If something does not work](#if-something-does-not-work).
 
 Do not run files while they are still inside the ZIP. Do not double-click `battlemap-mcp.exe` itself; your AI app starts it when needed.
 
@@ -149,6 +151,8 @@ Pick packs that suit the scene rather than all of them: including a very large l
 | “Not connected yet” | Enable MCP Bridge, open a map, wait for loading, and close any Dungeondraft dialogs. On Windows, start Dungeondraft normally rather than as administrator. Run the checker again. |
 | The checker reports an older/different bridge | Use both downloads from the same release, remove duplicate bridge copies, and fully quit and reopen Dungeondraft. |
 | The checker is ready, but the AI app cannot see Dungeondraft | Run the matching Connect file, finish any instructions it shows, then fully quit and reopen your AI app. |
+| Connect says Claude Code **already has a connection** | An earlier install is still registered, and Connect does not replace it on its own. Open PowerShell (Terminal on a Mac), run the `claude mcp remove` command the window shows, then run Connect again. |
+| Connect says it **kept** existing skills | Skills from an earlier install differ from this version and may hold your own edits, so Connect leaves them in place. To update them, run the command the window shows; your copies are backed up first. |
 | Windows warns about the download or the Connect file | The Windows companion is unsigned, so Windows may warn about it. See [platform limits](#platform-limits). Choose **More info → Run anyway** only for files from this project's Releases page; do not disable Windows security. |
 | The assistant keeps using the same few objects | The map probably includes no asset packs. See [Include your asset packs](#5-include-your-asset-packs). |
 | You asked to see the map but no picture appeared | The assistant does see it, but your AI app folds images inside the tool call — expand the tool call to view it. The assistant is also given the saved file's location, so you can ask it for the file. |

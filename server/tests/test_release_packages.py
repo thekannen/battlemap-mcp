@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import shutil
+import subprocess
 import sysconfig
 import zipfile
 from pathlib import Path
@@ -105,6 +106,55 @@ def test_unexpected_skills_rejected(tmp_path):
     (tmp_path / "secrets.txt").write_text("private")
     with pytest.raises(ValueError, match="Unexpected"):
         release.validate_tree(tmp_path, release.SKILL_FILES)
+
+
+def test_crlf_mod_source_is_rejected(checkout, tmp_path):
+    """v1.0.0's Windows companion bundled a CRLF bridge from its runner's
+    checkout while the mod ZIP, built on Linux, stayed LF. The smoke test
+    compared the payload with the same CRLF checkout, so nothing noticed."""
+    release = release_module()
+    script = checkout / "mod/battlemap-mcp-bridge/scripts/tools/mcp_bridge.gd"
+    script.write_bytes(script.read_bytes().replace(b"\n", b"\r\n"))
+    with pytest.raises(ValueError, match="line endings"):
+        release.build_mod(checkout, tmp_path / "out", "0.2.0")
+
+
+def test_crlf_skill_source_is_rejected(tmp_path):
+    release = release_module()
+    for name in release.SKILL_FILES:
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_bytes(b"skill\n")
+    (tmp_path / release.SKILL_FILES[0]).write_bytes(b"skill\r\n")
+    with pytest.raises(ValueError, match="line endings"):
+        release.require_lf(tmp_path, release.SKILL_FILES)
+    (tmp_path / release.SKILL_FILES[0]).write_bytes(b"skill\n")
+    release.require_lf(tmp_path, release.SKILL_FILES)
+
+
+def test_payload_sources_check_out_with_lf_on_every_host():
+    """Git must not convert the bridge or skills on a Windows runner."""
+    git = shutil.which("git")
+    if git is None or not (ROOT / ".git").exists():
+        pytest.skip("not a git checkout")
+    release = release_module()
+    paths = [f"mod/{release.MOD_ROOT}/{name}" for name in release.MOD_FILES]
+    paths += [f"skills/{name}" for name in release.SKILL_FILES]
+    completed = subprocess.run(
+        [git, "-C", str(ROOT), "check-attr", "eol", "--", *paths],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    lines = completed.stdout.splitlines()
+    assert len(lines) == len(paths)
+    assert all(line.endswith(": eol: lf") for line in lines), completed.stdout
+
+
+def test_line_ending_attributes_ship_to_users():
+    manifest_path = ROOT / "tools" / "public_export_manifest.json"
+    if not manifest_path.exists():
+        pytest.skip("no export manifest here; this is the published tree")
+    assert ".gitattributes" in json.loads(manifest_path.read_text())
 
 
 def test_companion_archive_rejects_escaping_link(tmp_path):
