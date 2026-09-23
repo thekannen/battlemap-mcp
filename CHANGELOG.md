@@ -11,8 +11,8 @@ Cleaner Windows downloads, and a way to hear about the next version.
 **Fewer antivirus warnings on Windows.** A couple of antivirus engines flagged
 the Windows companion as suspicious because of the generic launcher that many
 Python apps share, including malicious ones. The Windows companion is now built
-with its own launcher and carries its name and version, and every release is
-scanned on VirusTotal before it is published.
+with its own launcher and carries its name, version and icon, and every release
+is scanned on VirusTotal before it is published.
 
 **You'll hear about new versions.** The companion cannot update itself, so it
 now checks GitHub at most once a day for a newer release. When there is one,

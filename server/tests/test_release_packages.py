@@ -320,6 +320,21 @@ def test_windows_version_resource_names_the_release():
     assert "filevers=(1, 2, 3, 0)" in text
     assert "StringStruct('ProductVersion', '1.2.3')" in text
     assert "StringStruct('OriginalFilename', 'battlemap-mcp.exe')" in text
+    assert "StringStruct('Comments', " in text
+    assert "StringStruct('CompanyName', 'Knownframe')" in text
+
+
+def test_windows_build_carries_icon_and_skips_upx(tmp_path):
+    release = release_module()
+    args = release.windows_pyinstaller_args(ROOT, tmp_path, "1.2.3")
+    icon = args[args.index("--icon") + 1]
+    assert icon == ROOT / "packaging/icon.ico"
+    assert icon.read_bytes()[:4] == b"\x00\x00\x01\x00"  # ICO header
+    assert "--noupx" in args
+    assert "filevers=(1, 2, 3, 0)" in args[args.index("--version-file") + 1].read_text()
+    (tmp_path / "packaging").mkdir()
+    with pytest.raises(ValueError, match="icon missing"):
+        release.windows_pyinstaller_args(tmp_path, tmp_path, "1.2.3")
 
 
 def test_windows_bootloader_compile_refuses_the_stock_bootloader(tmp_path, monkeypatch):

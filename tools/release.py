@@ -280,13 +280,30 @@ def compile_windows_bootloader(root, python):
     return digest
 
 
+def windows_pyinstaller_args(root, work, version):
+    """What makes the Windows executable identify itself instead of looking
+    like every other PyInstaller build: a version resource, the Knownframe
+    icon in place of PyInstaller's default (which unsigned malware shares),
+    and no UPX packing, another antivirus heuristic."""
+    icon = root / "packaging/icon.ico"
+    if not icon.is_file():
+        raise ValueError(f"Windows icon missing: {icon}")
+    version_file = work / "version_info.txt"
+    version_file.write_text(windows_version_info(version))
+    return ["--version-file", version_file, "--icon", icon, "--noupx"]
+
+
 def windows_version_info(version):
     """PyInstaller --version-file text: an unlabelled executable scores worse."""
     numbers = tuple(int(part) for part in version.split("-")[0].split(".")) + (0,)
     strings = {
-        "CompanyName": "thekannen",
+        "CompanyName": "Knownframe",
         "FileDescription": "battlemap-mcp: MCP server for Dungeondraft",
         "FileVersion": version,
+        "Comments": (
+            "Connects AI assistants to a running Dungeondraft. "
+            "https://github.com/thekannen/battlemap-mcp"
+        ),
         "InternalName": "battlemap-mcp",
         "LegalCopyright": "Copyright (c) 2026 Brandon Florian, thekannen. MIT License.",
         "OriginalFilename": "battlemap-mcp.exe",
@@ -649,12 +666,9 @@ def build(
                 "from battlemap_mcp.cli import main\n"
                 "if __name__ == '__main__':\n    raise SystemExit(main())\n"
             )
-            windows_args = []
-            if os.name == "nt":
-                version_file = work / "version_info.txt"
-                version_file.write_text(windows_version_info(version))
-                # UPX-packed executables are another antivirus heuristic.
-                windows_args = ["--version-file", version_file, "--noupx"]
+            windows_args = (
+                windows_pyinstaller_args(root, work, version) if os.name == "nt" else []
+            )
             run(
                 python,
                 "-m",
