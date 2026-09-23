@@ -1,6 +1,6 @@
 # Contributing
 
-This repository contains the battlemap-mcp candidate: a Python MCP companion and a Dungeondraft bridge mod. Start with the [technical reference](docs/TECHNICAL_REFERENCE.md) and [developer installation](docs/developer-installation.md).
+This repository contains battlemap-mcp: a Python MCP companion and a Dungeondraft bridge mod. Start with the [technical reference](docs/TECHNICAL_REFERENCE.md) and [developer installation](docs/developer-installation.md).
 
 ## Local checks
 

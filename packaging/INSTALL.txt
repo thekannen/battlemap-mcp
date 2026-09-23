@@ -1,4 +1,4 @@
-Dungeondraft MCP companion (unsigned private testing build)
+battlemap-mcp companion
 
 Extract the entire archive into a permanent user-owned folder. Keep the executable
 and _internal folder together. No Python, uv, or PATH changes are required.
@@ -20,9 +20,9 @@ Claude Code needs its own command-line tool; this does not configure Claude chat
 
 Choose the client you use. Setup installs skills and registers this executable;
 it does not install the mod or change Dungeondraft settings. Install the separate
-matching mod ZIP, enable Battlemap MCP Bridge, restart Dungeondraft, and open a map.
-In Dungeondraft, Mods > Browse must select the folder CONTAINING
-battlemap-mcp-bridge. Tick Battlemap MCP Bridge and click Accept before opening a map.
+matching mod ZIP. In Dungeondraft, Mods > Browse must select the folder
+CONTAINING battlemap-mcp-bridge. Tick Battlemap MCP Bridge, click Accept, fully quit
+and reopen Dungeondraft, then open a map.
 Never register from a temporary build/download/extraction directory. If you move
 or upgrade this folder, run the matching Connect file from its permanent location.
 For Claude Code, if its entry points at an old location, first remove it:
@@ -31,8 +31,6 @@ Then run setup --force --client claude-code. Keep the old companion until setup
 succeeds. --force updates skills; it cannot overwrite Claude's existing entry.
 Repeating Connect at the same path is harmless. Do not mix _internal files from
 different versions. Keep the entire companion folder together when updating.
-Linux is supported; the Linux Dungeondraft build was verified on Ubuntu 24.04
-under WSL2. Run the Linux editor and AI client in the same Linux environment.
-Install the matching mod ZIP, select its parent folder under Mods, enable MCP
-Bridge, and open a map. The new Linux companion package still needs acceptance
-testing; see the repository's Linux installation guide for details.
+Linux has been validated on Ubuntu 24.04 under WSL2 only. Run the Linux editor
+and AI client in the same Linux environment, and see the repository's Linux
+installation guide for details.

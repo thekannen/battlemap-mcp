@@ -4,6 +4,22 @@ What changed in each release, written for the people using it. Versions cover
 the companion, the Dungeondraft mod and the map-making skills together; the
 wire protocol between them is versioned separately and is currently 25.
 
+## 1.0.0 — 2026-09-22
+
+The first public release.
+
+**Intel Macs get a companion.** Alongside the Apple Silicon download there is
+now a signed `macos-x64` companion for Intel Macs.
+
+**The bridge keeps its settings with the rest of its files.** The save
+directory you choose is now stored in the companion's own folder instead of
+Dungeondraft's, so settings from an earlier installation are not picked up. If
+you had chosen a save directory, choose it again.
+
+**Re-enable the mod once after updating.** The mod's internal id changed, so
+Dungeondraft treats this version as a new mod. Remove the old bridge folder,
+add the new one, and tick **Battlemap MCP Bridge** in the Mods menu again.
+
 ## 0.2.3 — 2026-09-22
 
 **Saving keeps working when its folder disappears.** The save directory is

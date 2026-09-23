@@ -1,15 +1,11 @@
 # Known limitations
 
-## Candidate acceptance
-
-This is a private candidate under the battlemap-mcp name, not an approved public release. Final hosted build, clean installation, upgrade/removal, client/model, and live editor acceptance remain pending for the renamed artifacts.
-
 ## Platform limits
 
 Windows, macOS, and Linux are supported targets, each with a limit:
 
-- **Windows:** the companion is unsigned, by choice. SmartScreen and similar warnings are expected on first run. Check downloads against the release's `SHA256SUMS`; do not turn off Windows security.
-- **macOS:** the Apple Silicon companion is signed and notarized, but the `.tar.gz` it ships in cannot carry a stapled notarization ticket. macOS looks the ticket up online at first launch, so a first launch with no network can be refused. There is no Intel Mac companion yet.
+- **Windows:** the companion is unsigned. SmartScreen and similar warnings are expected on first run. Check downloads against the release's `SHA256SUMS`; do not turn off Windows security.
+- **macOS:** the companion is signed with an Apple Developer ID and notarized by Apple. macOS confirms the notarization with Apple over the internet the first time the companion runs, so a first launch while offline can be blocked. The Intel companion has been checked only under Rosetta on Apple Silicon, not on an Intel Mac.
 - **Linux:** validated on Ubuntu 24.04 under WSL2 only, with Dungeondraft 1.2.0.1. Native Linux desktops and other distributions have not been tested.
 
 ## Editing constraints

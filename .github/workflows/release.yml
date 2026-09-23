@@ -18,13 +18,10 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Require the private candidate repository
+      - name: Require the release repository
         env:
-          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          test "$GH_REPO" = "thekannen/battlemap-mcp"
-          test "$(gh api "repos/$GH_REPO" --jq '.private')" = "true"
+        run: test "$GH_REPO" = "thekannen/battlemap-mcp"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -55,16 +52,14 @@ jobs:
 
   build:
     needs: validate
+    # macOS companions are built, signed and notarized on a Mac by the
+    # maintainer and attached to the draft; see docs/releases.md.
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: windows-2022
             platform: windows-x64
-          - runner: macos-15-intel
-            platform: macos-x64
-          - runner: macos-14
-            platform: macos-arm64
           - runner: ubuntu-22.04
             platform: linux-x64
     runs-on: ${{ matrix.runner }}
@@ -125,7 +120,7 @@ jobs:
       - name: Assemble exact assets and checksums
         env:
           PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
-        run: python tools/collect_release.py artifacts release --version "$PACKAGE_VERSION"
+        run: python tools/collect_release.py artifacts release --version "$PACKAGE_VERSION" --platform windows-x64 --platform linux-x64
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-assets
@@ -135,7 +130,7 @@ jobs:
 
   draft:
     needs: [validate, assemble]
-    if: github.event_name == 'push' && github.ref_type == 'tag' && github.repository == 'thekannen/battlemap-mcp' && github.event.repository.private == true
+    if: github.event_name == 'push' && github.ref_type == 'tag' && github.repository == 'thekannen/battlemap-mcp'
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -144,24 +139,19 @@ jobs:
         with:
           name: release-assets
           path: release
-      - name: Create private draft release
+      - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           test "$GH_REPO" = "thekannen/battlemap-mcp"
-          test "$(gh api "repos/$GH_REPO" --jq '.private')" = "true"
           cat > notes.md <<'NOTES'
-          Private test packages. Download the mod ZIP and the companion for your
-          platform from this same version. Extract the mod into your selected
-          Dungeondraft mods folder; extract the whole companion into a permanent
-          user-owned folder and run its executable with `setup --client codex`
-          or `setup --client claude-code`.
+          Download the mod ZIP and the companion for your platform from this
+          release, then follow the [installation guide](https://github.com/thekannen/battlemap-mcp#get-started).
+          See [CHANGELOG.md](https://github.com/thekannen/battlemap-mcp/blob/main/CHANGELOG.md) for what changed.
 
-          SHA256SUMS covers every download. These companions are unsigned private
-          test builds, not approved public releases. Final acceptance of these renamed
-          packages remains pending on each target OS and client. CI verifies
-          package startup and MCP initialization; live editor acceptance is manual.
+          SHA256SUMS covers every download. The Windows companion is unsigned;
+          the macOS companions are signed and notarized.
           NOTES
-          gh release create "$RELEASE_TAG" release/* --repo "$GH_REPO" --verify-tag --draft --prerelease --title "$RELEASE_TAG — private test packages" --notes-file notes.md
+          gh release create "$RELEASE_TAG" release/* --repo "$GH_REPO" --verify-tag --draft --title "$RELEASE_TAG" --notes-file notes.md

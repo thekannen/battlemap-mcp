@@ -1,59 +1,24 @@
-# Privacy and local data
+# Privacy
 
-This document describes the integration's local connection, stored files, and capture controls. Your AI client's and model provider's data policies apply separately.
+battlemap-mcp does not collect your data. It has no accounts, telemetry, analytics, or update checks, and it makes no internet connections of its own. The Dungeondraft mod and the companion talk only to each other, over a local connection on your computer.
 
-## What your AI client can receive
+## What your AI client receives
 
-The Dungeondraft mod and companion communicate over a localhost socket on your computer. Tool responses can include map information, asset names, local file paths, screenshots, and exported images. Your chosen MCP client can pass those responses to its model provider. A local bridge does not mean the entire AI conversation stays on your computer.
+When your assistant uses a tool, the result goes to your AI client (Codex, Claude Code, or another MCP client). Depending on the tool, results can include:
 
-Check your client's and provider's settings before using sensitive maps. Screenshots and exports can reveal GM notes, secret rooms, and other content you would not want players or others to see.
+- what is on the open map: elements, their positions, and text labels;
+- asset names and asset file paths;
+- file paths on your computer, such as where a map or image was saved. These include your user folder's name, which is often your username;
+- screenshots and exported images of the map.
 
-## Files stored on your computer
+Your AI client sends these to its model provider as part of the conversation, and that provider's privacy policy governs them. Check your client's and provider's settings before working on sensitive maps. Screenshots and exports can reveal GM notes, secret rooms, and other content you would not want players to see.
 
-The integration uses its own state directory:
+## Images saved on your computer
 
-| Platform | Default location |
-| --- | --- |
-| Windows | `%LOCALAPPDATA%/battlemap-mcp` (fallback: `%USERPROFILE%/AppData/Local/battlemap-mcp`) |
-| macOS | `~/Library/Application Support/battlemap-mcp` |
-| Linux | `$XDG_STATE_HOME/battlemap-mcp`, defaulting to `~/.local/state/battlemap-mcp` |
-
-This directory contains the authentication token (`mcp_bridge_token`), discovered port (`mcp_bridge_port`), and generated captures in `mcp_output`. The bridge protects its own state directory and token; it does not change permissions on Dungeondraft's folders. Do not share the token when reporting a problem.
-
-`BATTLEMAP_MCP_CAPTURE_DIR` can independently override the capture directory in both processes. `BATTLEMAP_MCP_TOKEN_FILE` overrides the client's token lookup; it does not move captures.
-
-## Capture retention and deletion
-
-Screenshots, whole-map exports, and asset previews are image copies written to the capture directory. The server keeps the newest **20 generated captures** by default and prunes older ones after each successful capture.
-
-You can control these local copies:
-
-- Ask your assistant to use the `clear_captures` MCP tool to remove generated captures on demand.
-- Set `BATTLEMAP_MCP_CAPTURE_RETENTION` to a non-negative number before starting the companion to choose a different limit. Setting it to `0` removes each generated capture after the server has read it.
-
-Both cleanup paths remove only the filenames the server generates: `screenshot-<hex>.png`, `export-<hex>.<format>`, and `asset_preview.png`. They leave other files and directories in `mcp_output` untouched.
-
-Deleting local captures does not delete copies already included in your AI client's conversation or retained by its provider. Manage those copies through that service's own controls.
-
-## State-directory migration
-
-The battlemap-mcp candidate uses the new integration-owned directory above.
-It does not copy or silently reuse state from installations under a previous
-integration name or from Dungeondraft's user-data folder. Capture files left in
-older directories remain there until you choose to remove them.
-
-Update both mod and companion together, remove the previous bridge from active
-mods folders, and fully restart the editor before reconnecting. Re-register the
-client under the `battlemap` name and remove an obsolete registration separately
-so two integrations do not compete for the same editor.
-
-An explicit `BATTLEMAP_MCP_TOKEN_FILE` override must point to the token the bridge
-actually writes. Do not copy authentication tokens between installations. Setup
-does not change or repair Dungeondraft folder permissions.
+Screenshots, exports, and asset previews are also saved locally so you can open them. The companion keeps the newest 20 and deletes older ones automatically. Ask your assistant to use `clear_captures` to remove them sooner, or set `BATTLEMAP_MCP_CAPTURE_RETENTION` to choose how many are kept (`0` keeps none). Deleting local copies does not remove images already sent in a conversation; manage those with your AI client and provider.
 
 ## Further details
 
-- [Installation and removal](install-packages.md#update-or-remove)
-- [Technical configuration](TECHNICAL_REFERENCE.md)
-- [Authentication protocol](PROTOCOL.md)
-- [Licensing and asset ownership](LEGAL.md)
+- [Technical configuration](TECHNICAL_REFERENCE.md): where the companion keeps its files, and configuration overrides.
+- [Authentication protocol](PROTOCOL.md): how the mod and companion authenticate each other without sending the token.
+- [Legal and attribution](LEGAL.md): licensing and asset ownership.

@@ -1,6 +1,6 @@
-# Building candidate packages
+# Building release packages
 
-This workflow builds unsigned private candidate packages for `thekannen/battlemap-mcp`. It does not publish public releases or package-index distributions, sign Windows binaries, or sign/notarize macOS binaries. Changing repository visibility does not enable publication: the workflow refuses to build in a public repository. A future public workflow requires separate authorization, permission review, signing, and package acceptance.
+Releases are published on GitHub from a version tag. The workflow builds the Windows and Linux companions, the mod, and the wheel into a draft release. The macOS companions (Apple Silicon and Intel) are built, signed, and notarized on a Mac by the maintainer and attached to the draft before it is published. Nothing is published to a package index. Windows companions are unsigned.
 
 ## Versions and local builds
 
@@ -8,9 +8,9 @@ Keep Python, mod, and plugin versions aligned. From the repository root:
 
 ```text
 python tools/release.py check
-python tools/release.py set-version 0.2.1
-python tools/release.py check --tag v0.2.1
-python tools/release.py build --out dist/candidate --companion --tag v0.2.1
+python tools/release.py set-version 1.0.0
+python tools/release.py check --tag v1.0.0
+python tools/release.py build --out dist/release --companion --tag v1.0.0
 ```
 
 Use the intended version consistently; the version above is an example. The builder uses an isolated build environment and requires network access for dependencies. Build each companion on its target OS/architecture. Resulting companions start without downloading a runtime.
@@ -25,14 +25,32 @@ python tools/release.py smoke PATH_TO_EXTRACTED_EXECUTABLE
 
 This checks version, bundled payload identity, and MCP startup/tool discovery. It does not establish live editor acceptance, signing, or reproducible binary output. Retain the dependency inventory and test the exact downloaded files.
 
-## Hosted candidate builds
+## Hosted builds
 
-The package workflow first checks the repository identity and its current private visibility through GitHub's API. It checks versions and runs the offline gate before building Windows x64, macOS Intel, macOS Apple Silicon, and Linux x64 companions. Each native archive is extracted and smoke-tested before its assets are assembled with checksums.
+The workflow checks the repository identity, versions, and the offline gate, then builds Windows x64 and Linux x64 companions. Each archive is extracted and smoke-tested before the assets are assembled with `SHA256SUMS`.
 
-Manual workflow dispatch produces artifacts retained for 14 days. A matching version-tag push additionally creates a draft prerelease, with a second identity/privacy check immediately before creation. Only that draft job has repository write permission; it does not run repository code. The release stays a draft and is never promoted automatically. Existing releases are not overwritten.
+Manual workflow dispatch produces artifacts retained for 14 days. Pushing a matching version tag also creates a draft release. Only that draft job has repository write permission, and it does not run repository code. The draft is never published automatically, and existing releases are not overwritten.
 
-## Acceptance before distribution
+## Adding the macOS companions
 
-Run clean install, update, rollback, removal, client connection, and live map checks against each exact candidate package. Include map persistence and image review where applicable. Record OS/architecture, editor, client, model, package hashes, and results. Earlier results from differently named artifacts do not satisfy this candidate's acceptance.
+Both macOS companions are built on an Apple Silicon Mac from the tagged commit, with a Developer ID Application certificate and a `notarytool` keychain profile. The Intel build runs under Rosetta with an x86_64 Python 3.11 or newer, for example one installed with `uv python install cpython-3.11-macos-x86_64-none`:
 
-Public distribution remains a separate decision. Complete rights/permission review, Windows signing, Apple signing/notarization, hosted checks, final live UAT, and a security review of any publishing permissions before authorizing a public workflow. Do not reuse artifacts from unrelated repositories.
+```text
+python3 tools/release.py build --out dist/macos-arm64 --companion --tag v1.0.0 --sign-identity "Developer ID Application: NAME (TEAMID)" --notary-profile PROFILE
+arch -x86_64 PATH_TO_X86_64_PYTHON tools/release.py build --out dist/macos-x64 --companion --tag v1.0.0 --sign-identity "Developer ID Application: NAME (TEAMID)" --notary-profile PROFILE
+```
+
+On Intel the builder pins `cryptography` below 49, the last series with Intel macOS wheels.
+
+Quarantine a fresh extraction of each and confirm it launches with no workaround. Then add both archives to the draft and regenerate the checksums:
+
+```text
+gh release download v1.0.0 --dir dist/publish
+cp dist/macos-*/battlemap-mcp-companion-1.0.0-macos-*.tar.gz dist/publish/
+cd dist/publish && shasum -a 256 *.zip *.tar.gz *.whl > SHA256SUMS
+gh release upload v1.0.0 battlemap-mcp-companion-1.0.0-macos-*.tar.gz SHA256SUMS --clobber
+```
+
+## Before publishing
+
+Install the exact draft downloads on each platform, connect a client, and run a live map check, including save and reopen. Then publish the draft.

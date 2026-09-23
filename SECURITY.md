@@ -1,21 +1,15 @@
 # Security policy
 
-## Supported development line
+## Supported versions
 
-Security fixes target `main`. This repository currently contains a private
-candidate; its packages are not approved public releases. See the
-[known limitations](docs/KNOWN_LIMITATIONS.md) for acceptance status.
+Security fixes target `main` and ship in the next release. Use the latest
+release.
 
 ## Report a vulnerability
 
-Do not disclose exploit details in a public issue. While this candidate is
-private, contact the maintainer through the existing private channel used to
-arrange access. Private vulnerability reporting is not currently available for
-this repository.
-
-After public release, if private vulnerability reporting has been enabled, use
-[Report a vulnerability](https://github.com/thekannen/battlemap-mcp/security/advisories/new).
-Until then, use the existing private channel rather than assuming that link works.
+Do not disclose exploit details in a public issue. Report privately through
+[Report a vulnerability](https://github.com/thekannen/battlemap-mcp/security/advisories/new)
+(the repository's **Security** tab).
 
 Include the affected version and component, operating system, reproduction
 steps, and relevant redacted logs. Never include authentication tokens, private
@@ -32,7 +26,7 @@ privately. A private report can be disclosed later.
 Bugs that do not extend an attacker's existing privileges can be discussed as
 ordinary issues after review. Document data-loss defects promptly in user-facing
 limitations and release notes; report privately first if they also have a
-security impact. Private candidate status does not authorize public disclosure.
+security impact.
 
 ## Security boundary
 

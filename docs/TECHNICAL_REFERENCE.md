@@ -18,10 +18,10 @@ Exports are asynchronous operations: poll `get_operation` until completed or fai
 
 ## Local state
 
-Integration-owned state lives under `battlemap-mcp` in the platform's local application state directory: LocalAppData on Windows, Application Support on macOS, and XDG_STATE_HOME (or `.local/state`) on Linux. This includes token and port discovery files. The old integration's state is not automatically reused.
+Integration-owned state lives under `battlemap-mcp` in the platform's local application state directory: LocalAppData on Windows, Application Support on macOS, and XDG_STATE_HOME (or `.local/state`) on Linux. This holds the authentication token, the port discovery file, the bridge's settings (the save directory), and saved captures in `mcp_output`. The bridge restricts this directory to your account; it never changes permissions on Dungeondraft's folders.
 
 `BATTLEMAP_MCP_TOKEN_FILE` overrides the companion's token lookup, and `BATTLEMAP_MCP_CAPTURE_DIR` selects its capture directory. An override must match the intended bridge session. Never include token contents in logs or reports. See [privacy](PRIVACY.md) for capture handling and what the AI client can receive.
 
 ## Development and package status
 
-Use [contributor checks](../CONTRIBUTING.md) and [package build instructions](releases.md). The [limitations](KNOWN_LIMITATIONS.md) distinguish existing functionality from final candidate acceptance. Offline checks and companion startup do not substitute for testing the exact packages with a live editor.
+Use [contributor checks](../CONTRIBUTING.md) and [package build instructions](releases.md). The [limitations](KNOWN_LIMITATIONS.md) describe current constraints and what has been tested. Offline checks and companion startup do not substitute for testing the exact packages with a live editor.

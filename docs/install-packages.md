@@ -6,24 +6,21 @@ client help, and updates.
 
 ## macOS
 
-Private candidate packages. The macOS companion is signed and notarized.
-Verified on Apple Silicon.
+The macOS companion is signed with an Apple Developer ID and notarized by
+Apple. Verified on Apple Silicon; the Intel companion has been checked only
+under Rosetta on Apple Silicon, not on an Intel Mac.
 
-**Be connected to the internet the first time you open it.** The companion
-ships as a `.tar.gz`, and that format cannot carry a stapled notarization
-ticket, so macOS looks the ticket up online at first launch. Without a network
-that first launch can be refused; connect and open it again. Step 6 describes
-what a refusal looks like.
+The first time the companion runs, macOS confirms its notarization with Apple
+over the internet. If your Mac is offline at that moment, macOS can block it;
+connect and open it again. Step 6 describes what a block looks like.
 
-Windows builds are unsigned by choice and stay that way; SmartScreen warnings
-there are expected, not a defect.
+The Windows companion is unsigned, so SmartScreen warnings there are expected.
 
 1. From the same [release](https://github.com/thekannen/battlemap-mcp/releases),
-   download `battlemap-mcp-mod-<version>.zip` and the Mac companion,
-   `battlemap-mcp-companion-<version>-macos-arm64.tar.gz`. It is for Apple
-   Silicon; there is no Intel Mac companion yet. **Apple menu → About This
-   Mac** shows your chip; in Terminal, `uname -m` prints `arm64` on Apple
-   Silicon. Skip the Source code archives.
+   download `battlemap-mcp-mod-<version>.zip` and your Mac companion:
+   `macos-arm64.tar.gz` for Apple Silicon, or `macos-x64.tar.gz` for Intel.
+   **Apple menu → About This Mac** shows your chip; in Terminal, `uname -m`
+   prints `arm64` or `x86_64`. Skip the Source code archives.
 
    The release also carries `SHA256SUMS` and a `.whl`. **You do not need the
    `.whl`** — it is for running from Python packaging instead of the companion,
@@ -40,9 +37,9 @@ there are expected, not a defect.
    **Replacing an older bridge:** save your map and fully quit Dungeondraft
    first. Then move the old bridge folder out of the mods folder — anywhere
    outside it will do, and moving it aside is safer than deleting if you may
-   want it back. Copy the new one in afterwards. Every version ships the same
-   mod id, so two bridge folders in one mods folder is an unsupported state and
-   the editor may load either of them.
+   want it back. Copy the new one in afterwards. Two bridge folders in one mods
+   folder is an unsupported state, and the editor may load both or either of
+   them.
 
    The old bridge may be a **symbolic link** rather than a real folder, which
    is normal if it was installed from a source checkout. Move or remove the
@@ -68,7 +65,7 @@ there are expected, not a defect.
 5. Open **Connect Codex.command** or **Connect Claude Code.command**. These
    install the bundled skills and register the companion with that client.
 
-6. **If macOS blocks it.** On the signed companion, first check that you are
+6. **If macOS blocks it.** On the signed companion, make sure the Mac is
    online and open it again; that is usually all it takes, and you do not need
    the quarantine command below. An unsigned build, such as one you built
    yourself, is blocked every time until you allow it. What you see depends on
@@ -164,8 +161,9 @@ The earlier setup used the Linux editor, not the Windows editor through Wine.
 2. In the Linux Dungeondraft app, choose **Mods → Browse** and select the folder
    containing **battlemap-mcp-bridge**. The default `/opt/Dungeondraft/mods`
    location may require administrator access; use your own folder instead.
-3. Tick **Battlemap MCP Bridge**, click **Accept**, and create or open a map. Wait for loading
-   to finish. Do not run Dungeondraft or the companion as root.
+3. Tick **Battlemap MCP Bridge** and click **Accept**. Then fully quit and reopen
+   Dungeondraft: it reads mods only when it starts. Create or open a map and wait
+   for loading to finish. Do not run Dungeondraft or the companion as root.
 
 ### Connect your client
 
@@ -267,6 +265,6 @@ running when there are duplicates.
 
 The bridge stores credentials and captures in its own private runtime directory.
 It does not change permissions on Dungeondraft's folders. See
-[state migration](PRIVACY.md#state-directory-migration) for older installations.
+[privacy](PRIVACY.md) for what your AI client can receive.
 For startup problems, read the current `Dungeondraft.log`; timestamped logs may
 be archives of an earlier session.

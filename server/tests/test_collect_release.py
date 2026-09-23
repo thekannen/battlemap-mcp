@@ -22,9 +22,17 @@ def fixture_artifacts(tmp_path):
     return source
 
 
-def collect(source, output):
+def collect(source, output, *extra):
     return subprocess.run(
-        [sys.executable, str(SCRIPT), str(source), str(output), "--version", "0.2.0"],
+        [
+            sys.executable,
+            str(SCRIPT),
+            str(source),
+            str(output),
+            "--version",
+            "0.2.0",
+            *extra,
+        ],
         capture_output=True,
         text=True,
     )
@@ -60,3 +68,17 @@ def test_existing_output_is_not_reused_or_destroyed(tmp_path):
     sentinel.write_text("keep")
     assert collect(source, output).returncode != 0
     assert sentinel.read_text() == "keep"
+
+
+def test_platform_subset_collects_only_those_companions(tmp_path):
+    """The public workflow builds Windows and Linux; signed macOS companions
+    are attached by hand, so they must not be required here."""
+    source = fixture_artifacts(tmp_path)
+    output = tmp_path / "release"
+    result = collect(source, output, "--platform", "windows-x64", "--platform", "linux-x64")
+    assert result.returncode == 0, result.stderr
+    names = sorted(p.name for p in output.iterdir())
+    assert not [n for n in names if "macos" in n]
+    assert len(names) == 5
+    sums = (output / "SHA256SUMS").read_text()
+    assert "windows-x64" in sums and "linux-x64" in sums and "macos" not in sums

@@ -250,3 +250,11 @@ def test_changelog_ships_to_users():
     if not manifest_path.exists():
         pytest.skip("no export manifest here; this is the published tree")
     assert "CHANGELOG.md" in json.loads(manifest_path.read_text())
+
+
+def test_intel_macs_pin_cryptography_to_a_version_with_wheels():
+    release = release_module()
+    assert release.dependency_pins("Darwin", "x86_64") == ["cryptography>=48,<49"]
+    assert release.dependency_pins("Darwin", "arm64") == []
+    assert release.dependency_pins("Windows", "AMD64") == []
+    assert release.dependency_pins("Linux", "x86_64") == []

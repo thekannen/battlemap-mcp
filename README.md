@@ -1,3 +1,7 @@
+# battlemap-mcp
+
+An AI collaborator for your Dungeondraft maps: a local bridge that lets Codex or Claude Code build, inspect, and refine the map you have open, using assets you already own.
+
 ## Support creators first
 
 This is a local automation layer for your own Dungeondraft map-making session. It does **not** generate original assets or art for you; it just drives what you already own in Dungeondraft.
@@ -56,8 +60,6 @@ The included art-direction and visual-review skills help the assistant plan and 
 
 ## Get started
 
-This is a private release candidate. Its renamed packages still need final installation and live acceptance testing; downloads are available only to invited testers. No public release or package-index availability is implied.
-
 You need **Dungeondraft 1.2.0.1** and **Codex or Claude Code**, installed on the same computer. The companion download includes everything else you need.
 
 Follow the Windows instructions below, or choose [macOS](docs/install-packages.md#macos) or [Linux](docs/install-packages.md#linux).
@@ -82,10 +84,11 @@ Skip the **Source code** downloads. You do not need them.
    **Dungeondraft Mods** there. Use that folder instead of Program Files.
 3. Open Dungeondraft and click **Mods**, then **Browse**. Select your mods folder
    — the folder **containing** `battlemap-mcp-bridge`, not the bridge folder itself.
-4. Tick **Battlemap MCP Bridge**, click **Accept**, then create or open a map. Wait for it
-   to finish loading. The bridge does not run on the start screen.
+4. Tick **Battlemap MCP Bridge** and click **Accept**. Then fully quit and reopen
+   Dungeondraft: it reads mods only when it starts. Create or open a map and wait
+   for it to finish loading. The bridge does not run on the start screen.
 
-If you are replacing an older bridge, save your map and fully quit Dungeondraft first, then delete the old bridge folder before copying in the new one. This applies on every platform. Keep only one MCP Bridge in your active mods folders: every version ships the same mod id, so two bridge folders is an unsupported state and the editor may load either one. Other mods can stay where they are.
+If you are replacing an older bridge, save your map and fully quit Dungeondraft first, then delete the old bridge folder before copying in the new one. This applies on every platform. Keep only one MCP Bridge in your active mods folders. Two bridge folders is an unsupported state, and the editor may load both or either one. Other mods can stay where they are.
 
 ### 3. Connect your AI app
 
@@ -133,8 +136,8 @@ Pick packs that suit the scene rather than all of them: including a very large l
 
 ### Platform limits
 
-- **Windows:** the companion is unsigned, by choice. When you first open **Connect** or **Check connection**, Windows may warn you, for example with SmartScreen's **Windows protected your PC**. That is expected. If you downloaded both files from this project's [Releases](https://github.com/thekannen/battlemap-mcp/releases) page, choose **More info → Run anyway**. To confirm a download is the published one, compare `Get-FileHash <file>` in PowerShell with the release's `SHA256SUMS`. Do not turn off SmartScreen or other Windows security.
-- **macOS:** the companion is signed and notarized, but it ships as a `.tar.gz`, which cannot carry a stapled notarization ticket. macOS looks the ticket up online the first time the companion runs, so **be connected to the internet for the first launch**. Without a network, that first launch can be refused. See [macOS install](docs/install-packages.md#macos).
+- **Windows:** the companion is unsigned. When you first open **Connect** or **Check connection**, Windows may warn you, for example with SmartScreen's **Windows protected your PC**. If you downloaded both files from this project's [Releases](https://github.com/thekannen/battlemap-mcp/releases) page, choose **More info → Run anyway**. To confirm a download is the published one, compare `Get-FileHash <file>` in PowerShell with the release's `SHA256SUMS`. Do not turn off SmartScreen or other Windows security.
+- **macOS:** the companion is signed with an Apple Developer ID and notarized by Apple. The first time it runs, macOS confirms that with Apple over the internet. If your Mac is offline at that moment, macOS can block it; connect and open it again. See [macOS install](docs/install-packages.md#macos).
 - **Linux:** validated on Ubuntu 24.04 under WSL2 only. Native Linux desktops and other distributions have not been tested.
 
 ### If something does not work
@@ -146,16 +149,16 @@ Pick packs that suit the scene rather than all of them: including a very large l
 | “Not connected yet” | Enable MCP Bridge, open a map, wait for loading, and close any Dungeondraft dialogs. Run the checker again. |
 | The checker reports an older/different bridge | Use both downloads from the same release, remove duplicate bridge copies, and fully quit and reopen Dungeondraft. |
 | The checker is ready, but the AI app cannot see Dungeondraft | Run the matching Connect file, finish any instructions it shows, then fully quit and reopen your AI app. |
-| Windows warns about the download or the Connect file | Expected: the Windows companion is unsigned. See [platform limits](#platform-limits). Choose **More info → Run anyway** only for files from this project's Releases page; do not disable Windows security. |
+| Windows warns about the download or the Connect file | The Windows companion is unsigned, so Windows may warn about it. See [platform limits](#platform-limits). Choose **More info → Run anyway** only for files from this project's Releases page; do not disable Windows security. |
 | The assistant keeps using the same few objects | The map probably includes no asset packs. See [Include your asset packs](#5-include-your-asset-packs). |
 | You asked to see the map but no picture appeared | The assistant does see it, but your AI app folds images inside the tool call — expand the tool call to view it. The assistant is also given the saved file's location, so you can ask it for the file. |
-| macOS blocks the companion | Not a crash. The signed companion needs an internet connection the first time it runs; connect and open it again. From Finder a block is a "cannot be verified" dialog; from Terminal it is only `Killed: 9` and exit code 137, with no message. See [macOS install](docs/install-packages.md#macos), step 6. |
+| macOS blocks the companion | Not a crash. If this is the first launch, make sure the Mac is online so macOS can confirm the notarization with Apple, then open it again. From Finder a block is a "cannot be verified" dialog; from Terminal it is only `Killed: 9` and exit code 137, with no message. See [macOS install](docs/install-packages.md#macos), step 6. |
 
 [Update, move, or uninstall](docs/install-packages.md#update-or-remove).
 
 ## Privacy
 
-See [Privacy and local data](docs/PRIVACY.md) for what your AI client can receive, where local files are stored, and how to manage captures.
+Nothing is collected: the mod and companion make no internet connections of their own. See [Privacy](docs/PRIVACY.md) for what your AI client receives and how to remove saved images.
 
 ## Go deeper
 

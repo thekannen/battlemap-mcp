@@ -342,7 +342,7 @@ recently_opened_maps=[ "/maps/a.dungeondraft_map", "/maps/b.dungeondraft_map" ]
 
 [Mods]
 
-active_mods=[ "Knownframe.MCPBridge" ]
+active_mods=[ "thekannen.MCPBridge" ]
 mods_directory="{mods}"
 
 [New]

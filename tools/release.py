@@ -188,6 +188,20 @@ def build_mod(root, out, version):
     return archive
 
 
+def dependency_pins(system=None, machine=None):
+    """Extra pins for the companion's runtime dependencies on this build host.
+
+    cryptography (via mcp -> pyjwt[crypto]) stopped publishing Intel macOS
+    wheels at 49.0.0. Building it from source there links the wrong OpenSSL and
+    the frozen companion cannot import it, so Intel Macs stay on 48.x.
+    """
+    system = system or platform.system()
+    machine = (machine or platform.machine()).lower()
+    if system == "Darwin" and machine in ("x86_64", "amd64"):
+        return ["cryptography>=48,<49"]
+    return []
+
+
 def run(*args, **kwargs):
     subprocess.run([str(a) for a in args], check=True, **kwargs)
 
@@ -438,8 +452,7 @@ def build(
         # kind of thing that trains people to skip signing.
         if platform.system() != "Darwin":
             raise ValueError(
-                "signing and notarization are macOS-only; Windows builds are "
-                "deliberately unsigned"
+                "signing and notarization are macOS-only; Windows builds are deliberately unsigned"
             )
         if not (sign_identity and notary_profile):
             raise ValueError(
@@ -515,7 +528,21 @@ def build(
                     raise ValueError(f"Wheel bridge payload mismatch: {name}")
         artifacts.append(wheel)
         if companion:
-            run(python, "-m", "pip", "install", wheel)
+            # A missing cryptography wheel must fail here, not compile a
+            # library the frozen companion cannot load.
+            run(
+                python,
+                "-m",
+                "pip",
+                "install",
+                "--only-binary=cryptography",
+                wheel,
+                *dependency_pins(),
+            )
+            # Python 3.11 venvs include setuptools. PyInstaller then bundles its
+            # pkg_resources runtime hook, which fails to import in the frozen
+            # companion; nothing at runtime needs setuptools.
+            run(python, "-m", "pip", "uninstall", "--yes", "setuptools")
             entry = work / "launcher.py"
             entry.write_text(
                 "from battlemap_mcp.cli import main\n"

@@ -16,7 +16,7 @@ def test_payload_root_contains_the_bridge_manifest():
 
     assert manifest.is_file()
     contents = manifest.read_text()
-    assert '"unique_id": "Knownframe.MCPBridge"' in contents
+    assert '"unique_id": "thekannen.MCPBridge"' in contents
     assert '"dd_version": "1.2.0.1"' in contents
 
 

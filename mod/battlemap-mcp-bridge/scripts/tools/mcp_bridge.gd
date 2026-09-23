@@ -16,9 +16,7 @@ const PROTOCOL_VERSION := 25
 
 const TOKEN_FILE := "mcp_bridge_token"
 
-# Per-install settings, human-readable so a user can inspect or edit them.
-# Currently just the directory save_map writes into; see _save_directory().
-const CONFIG_FILE := "user://mcp_bridge_config.json"
+const CONFIG_FILE := "mcp_bridge_config.json"
 
 # Maps saved through the bridge land in a named subdirectory of Dungeondraft's
 # own map folder rather than loose in it, so they are easy to find and easy to
@@ -221,6 +219,10 @@ func _state_directory() -> String:
 func _token_path() -> String:
 	var base = _state_directory()
 	return base.plus_file(TOKEN_FILE) if base != "" else ""
+
+func _config_path() -> String:
+	var base = _state_directory()
+	return base.plus_file(CONFIG_FILE) if base != "" else ""
 
 func _ensure_token() -> String:
 	var f = File.new()
@@ -2728,10 +2730,11 @@ func _normalise_dir(raw : String) -> String:
 	return out
 
 func _read_config() -> Dictionary:
+	var path = _config_path()
 	var f = File.new()
-	if not f.file_exists(CONFIG_FILE):
+	if path == "" or not f.file_exists(path):
 		return {}
-	if f.open(CONFIG_FILE, File.READ) != OK:
+	if f.open(path, File.READ) != OK:
 		return {}
 	var text = f.get_as_text()
 	f.close()
@@ -2741,8 +2744,9 @@ func _read_config() -> Dictionary:
 	return parsed.result
 
 func _write_config(cfg : Dictionary) -> bool:
+	var path = _config_path()
 	var f = File.new()
-	if f.open(CONFIG_FILE, File.WRITE) != OK:
+	if path == "" or f.open(path, File.WRITE) != OK:
 		return false
 	f.store_line(JSON.print(cfg, "\t"))
 	f.close()
@@ -2760,7 +2764,7 @@ func _get_save_directory(req : Dictionary) -> Dictionary:
 		"source": ("setting" if configured != "" and not configured_missing
 			else "Dungeondraft's map directory / " + SAVE_SUBDIR),
 		"configured_missing": configured_missing,
-		"config_file": ProjectSettings.globalize_path(CONFIG_FILE) }
+		"config_file": _config_path() }
 	if configured_missing:
 		out["note"] = ("the configured save directory no longer exists, so saves go to "
 			+ effective + " — set_save_directory with a new path, or \"\" to clear it")
@@ -2772,14 +2776,14 @@ func _set_save_directory(req : Dictionary) -> Dictionary:
 	if dir == "":
 		cfg.erase("save_directory")
 		if not _write_config(cfg):
-			return _err("could not write " + CONFIG_FILE)
+			return _err("could not write " + _config_path())
 		return _ok({ "cleared": true, "effective": _save_directory() })
 	var d = Directory.new()
 	if not d.dir_exists(dir):
 		return _err("no such directory: " + dir)
 	cfg["save_directory"] = dir
 	if not _write_config(cfg):
-		return _err("could not write " + CONFIG_FILE)
+		return _err("could not write " + _config_path())
 	return _ok({ "configured": dir, "effective": _save_directory() })
 
 # Validate a caller-supplied map filename. Same shape as _output_path's rules:
