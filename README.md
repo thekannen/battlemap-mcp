@@ -20,6 +20,10 @@ Describe the scene you want; it can explore the assets you already own, lay out 
 
 `battlemap-mcp` is a local bridge between your MCP client and the open Dungeondraft map. It offers tools for building, inspecting, and reviewing maps—without requiring a hosted bridge service.
 
+<img src="docs/media/tavern-build.gif" alt="An AI agent building a tavern interior in Dungeondraft, sped up" width="100%">
+
+<sub>Sped up 11x to fit as a gif — the actual build took about 5 minutes. Plays once; reload the page to watch again.</sub>
+
 ## What you can make
 
 Ask for a whole scene, work through an idea together, or hand off a repetitive job. These example prompts are starting points: change the setting, mood, and constraints to suit your game. For editing, open a map in Dungeondraft first and work on a copy you can experiment with.
@@ -118,6 +122,10 @@ Then start a new conversation in your AI app and ask:
 
 > Check the Dungeondraft connection and tell me the open map's dimensions.
 > Don't change anything yet.
+
+<p align="center">
+  <img src="docs/media/status.gif" alt="Asking an MCP client to check the Dungeondraft bridge connection and report the open map's dimensions" width="500">
+</p>
 
 The checker confirms the mod connection; this first prompt confirms your AI app can use it. Keep Dungeondraft and the map open while you work.
 
