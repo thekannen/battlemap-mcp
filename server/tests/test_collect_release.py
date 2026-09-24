@@ -82,3 +82,74 @@ def test_platform_subset_collects_only_those_companions(tmp_path):
     assert len(names) == 5
     sums = (output / "SHA256SUMS").read_text()
     assert "windows-x64" in sums and "linux-x64" in sums and "macos" not in sums
+
+
+# --- the release page's "What's new" -----------------------------------------
+
+CHANGELOG = """# Changelog
+
+## Unreleased
+
+**Not yet.** Work in progress.
+
+## 0.2.0 — 2026-09-24
+
+Fixes for maps and water.
+
+**Resized maps open again.** Long explanation that wraps
+over two lines.
+
+**Water keeps its colour.** More.
+
+## 0.1.0 — 2026-09-01
+
+**Older.** Not this release.
+"""
+
+
+def _summary(tmp_path, changelog=CHANGELOG, version="0.2.0", out=None):
+    log = tmp_path / "CHANGELOG.md"
+    log.write_text(changelog, encoding="utf-8")
+    out = out or tmp_path / "notes" / "summary.md"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            str(fixture_artifacts(tmp_path)),
+            str(tmp_path / "release"),
+            "--version",
+            version,
+            "--changelog",
+            str(log),
+            "--summary-out",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return result, out
+
+
+def test_the_summary_is_this_versions_intro_and_bold_leads(tmp_path):
+    result, out = _summary(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert out.read_text(encoding="utf-8") == (
+        "## What's new in 0.2.0\n\n"
+        "Fixes for maps and water.\n\n"
+        "- Resized maps open again.\n"
+        "- Water keeps its colour.\n"
+    )
+    # A notes file must never become a download.
+    assert not (tmp_path / "release" / "summary.md").exists()
+
+
+def test_a_version_without_a_changelog_section_is_refused(tmp_path):
+    result, _ = _summary(tmp_path, changelog=CHANGELOG.replace("## 0.2.0", "## 0.2.9"))
+    assert result.returncode != 0
+    assert "no '## 0.2.0' section" in result.stderr
+
+
+def test_the_summary_may_not_land_among_the_assets(tmp_path):
+    result, _ = _summary(tmp_path, out=tmp_path / "release" / "summary.md")
+    assert result.returncode != 0
+    assert "outside the asset directory" in result.stderr
