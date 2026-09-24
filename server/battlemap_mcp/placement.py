@@ -170,6 +170,38 @@ def _straddles(box: Box, segment: Segment, tolerance: float) -> bool:
     return max(along) > 0.0 and min(along) < length
 
 
+WALL_CAP_LAYER = 700
+WALL_CAP_NAMES = ("post", "pillar", "column", "beam")
+
+
+def _wall_vertices(walls: list[dict]) -> list[tuple[float, float]]:
+    """Every wall point: the corners and joins a cap would be set over."""
+    return [
+        (float(point[0]), float(point[1]))
+        for wall in walls
+        for point in (wall.get("points") or [])
+        if len(point) >= 2
+    ]
+
+
+def _is_wall_cap(element: dict, box: Box, junctions: list[tuple[float, float]]) -> bool:
+    """A deliberate cap: on a layer above the walls, and over a join or named as one.
+
+    Layer is required either way. A post on the default layer 100 is drawn
+    UNDER the wall it crosses, so it is a placement mistake, not a cap.
+    """
+    try:
+        layer = int(element.get("layer", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    if layer < WALL_CAP_LAYER:
+        return False
+    name = str(element.get("asset", "")).rsplit("/", 1)[-1].lower()
+    if any(word in name for word in WALL_CAP_NAMES):
+        return True
+    return any(box.distance_to(x, y) == 0.0 for x, y in junctions)
+
+
 def find_intrusions(
     objects: list[dict],
     walls: list[dict],
@@ -180,7 +212,9 @@ def find_intrusions(
 ) -> dict:
     """Report objects that cross a wall or block a portal. Read-only."""
     segments = _segments(walls)
+    junctions = _wall_vertices(walls)
     crossing: list[dict] = []
+    caps: list[dict] = []
     blocking: list[dict] = []
     unmeasurable: list[dict] = []
 
@@ -196,17 +230,19 @@ def find_intrusions(
             {segment.wall_id for segment in segments if _straddles(box, segment, tolerance)}
         )
         if hit_walls:
-            crossing.append(
-                {
-                    "id": element_id,
-                    "asset": asset,
-                    "position": [box.cx, box.cy],
-                    "asset_size_woxels": [box.half_w * 2, box.half_h * 2],
-                    "rotation": box.rotation_deg,
-                    "bounds": box.bounds(),
-                    "wall_ids": hit_walls,
-                }
-            )
+            finding = {
+                "id": element_id,
+                "asset": asset,
+                "position": [box.cx, box.cy],
+                "asset_size_woxels": [box.half_w * 2, box.half_h * 2],
+                "rotation": box.rotation_deg,
+                "bounds": box.bounds(),
+                "wall_ids": hit_walls,
+            }
+            if _is_wall_cap(element, box, junctions):
+                caps.append(finding)
+            else:
+                crossing.append(finding)
 
         covered = []
         for portal in portals:
@@ -231,6 +267,7 @@ def find_intrusions(
         "checked": len(objects),
         "tolerance_woxels": tolerance,
         "crossing_walls": crossing,
+        "wall_caps": caps,
         "blocking_portals": blocking,
         "unmeasurable": unmeasurable,
         "ok": not crossing and not blocking,
@@ -340,6 +377,58 @@ def find_stacks(
     return found[:limit]
 
 
+def _point_segment_distance(px: float, py: float, segment: Segment) -> float:
+    dx, dy = segment.x1 - segment.x0, segment.y1 - segment.y0
+    length_sq = dx * dx + dy * dy
+    if length_sq == 0:
+        return math.hypot(px - segment.x0, py - segment.y0)
+    t = max(0.0, min(1.0, ((px - segment.x0) * dx + (py - segment.y0) * dy) / length_sq))
+    return math.hypot(px - (segment.x0 + t * dx), py - (segment.y0 + t * dy))
+
+
+def _box_segment_distance(box: Box, segment: Segment) -> float:
+    """Shortest distance between an oriented box and a wall segment; 0 if they touch."""
+    # Work in the box's own frame, where it is an axis-aligned rectangle.
+    theta = math.radians(-box.rotation_deg)
+    cos_t, sin_t = math.cos(theta), math.sin(theta)
+
+    def local(x: float, y: float) -> tuple[float, float]:
+        dx, dy = x - box.cx, y - box.cy
+        return dx * cos_t - dy * sin_t, dx * sin_t + dy * cos_t
+
+    (ax, ay), (bx, by) = local(segment.x0, segment.y0), local(segment.x1, segment.y1)
+    # Liang-Barsky: does the segment enter the rectangle at all?
+    t0, t1 = 0.0, 1.0
+    crosses = True
+    for p, q in (
+        (-(bx - ax), ax + box.half_w),
+        (bx - ax, box.half_w - ax),
+        (-(by - ay), ay + box.half_h),
+        (by - ay, box.half_h - ay),
+    ):
+        if p == 0:
+            if q < 0:
+                crosses = False
+                break
+            continue
+        r = q / p
+        if p < 0:
+            t0 = max(t0, r)
+        else:
+            t1 = min(t1, r)
+        if t0 > t1:
+            crosses = False
+            break
+    if crosses:
+        return 0.0
+    # Apart, the closest pair involves an end of the segment or a box corner.
+    return min(
+        box.distance_to(segment.x0, segment.y0),
+        box.distance_to(segment.x1, segment.y1),
+        *(_point_segment_distance(cx, cy, segment) for cx, cy in box.corners()),
+    )
+
+
 def find_adrift_fixtures(
     objects: list[dict], walls: list[dict], *, reach: float = FIXTURE_REACH
 ) -> list[dict]:
@@ -362,14 +451,7 @@ def find_adrift_fixtures(
         box = box_for(element)
         if box is None:
             continue
-        nearest = min(
-            min(
-                box.distance_to(segment.x0, segment.y0),
-                box.distance_to(segment.x1, segment.y1),
-                box.distance_to((segment.x0 + segment.x1) / 2, (segment.y0 + segment.y1) / 2),
-            )
-            for segment in segments
-        )
+        nearest = min(_box_segment_distance(box, segment) for segment in segments)
         if nearest > reach:
             found.append(
                 {

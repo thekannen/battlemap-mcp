@@ -8,6 +8,7 @@ knowable offline: validation, caps, and the exact request the bridge receives.
 from __future__ import annotations
 
 import asyncio
+import pathlib
 
 import pytest
 from mcp.client import Client
@@ -182,3 +183,81 @@ def test_renderer_preflight_precedes_history_and_batch_mutations():
     assert text.count("for entry in order:") == 2, (
         "all preflight must finish before any batch detach"
     )
+
+
+def _write(tmp_path, data, name="batch.json"):
+    import json
+
+    path = tmp_path / name
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return str(path)
+
+
+def test_a_file_batch_is_one_compact_request(calls, tmp_path):
+    entries = [{"asset": "res://tree.png", "x": i * 10, "y": 5} for i in range(600)]
+    server.place_objects(file=_write(tmp_path, entries))
+    [(command, params)] = calls
+    assert command == "place_objects"
+    assert params["compact"] is True
+    assert len(params["objects"]) == 600
+    assert params["objects"][599]["x"] == 5990.0
+
+
+def test_a_file_may_wrap_its_entries(calls, tmp_path):
+    server.place_objects(file=_write(tmp_path, {"objects": [{"asset": "res://a.png"}]}))
+    assert len(calls[0][1]["objects"]) == 1
+
+
+def test_a_file_batch_is_validated_before_anything_is_sent(calls, tmp_path):
+    entries = [{"asset": "res://a.png"}] * 10 + [{"asset": "res://a.png", "layer": 150}]
+    with pytest.raises(ValidationError, match=r"objects\[10\]\.layer"):
+        server.place_objects(file=_write(tmp_path, entries))
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("make", "message"),
+    [
+        (lambda p: "relative/batch.json", "absolute"),
+        (lambda p: _write(p, [], name="batch.txt"), ".json"),
+        (lambda p: str(p / "missing.json"), "cannot read"),
+        (lambda p: _write(p, {"items": []}), "list of entries"),
+        (lambda p: _write(p, [{"asset": "res://a.png"}] * 1001), "past the 1000"),
+    ],
+)
+def test_bad_batch_files_are_refused(calls, tmp_path, make, message):
+    with pytest.raises(ValidationError, match=message):
+        server.place_objects(file=make(tmp_path))
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("given", "hint"),
+    [
+        ("C:/maps/batch.json", "/mnt/c/maps/batch.json"),
+        ("D:\\maps\\batch.json", "/mnt/d/maps/batch.json"),
+    ],
+)
+def test_a_windows_path_on_a_posix_server_names_the_wsl_form(calls, monkeypatch, given, hint):
+    monkeypatch.setattr(server, "Path", pathlib.PurePosixPath)
+    with pytest.raises(ValidationError, match="absolute") as refused:
+        server.place_objects(file=given)
+    assert hint in str(refused.value)
+    assert calls == []
+
+
+def test_a_plain_relative_path_gets_no_wsl_hint(calls, monkeypatch):
+    monkeypatch.setattr(server, "Path", pathlib.PurePosixPath)
+    with pytest.raises(ValidationError, match="absolute") as refused:
+        server.place_objects(file="relative/batch.json")
+    assert "/mnt/" not in str(refused.value)
+
+
+def test_objects_and_file_are_exclusive(calls, tmp_path):
+    with pytest.raises(ValidationError, match="not both"):
+        server.place_objects([{"asset": "res://a.png"}], file=_write(tmp_path, []))
+
+
+def test_inline_batches_keep_their_cap_of_100(calls):
+    with pytest.raises(ValidationError, match="past the 100"):
+        server.place_objects([{"asset": "res://a.png"}] * 101)

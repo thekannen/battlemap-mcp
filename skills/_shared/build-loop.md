@@ -70,8 +70,8 @@ first. Decide each of these explicitly, and say which you chose:
    deliverable, now rather than later. **Size the map to the scene**: a small
    building in the middle of a mostly empty canvas reads as unfinished at play
    scale. Either plan surroundings out to the edges, or set the size first —
-   `set_map_size` keeps the top-left origin and does not move what is placed,
-   so shrinking it afterwards cuts into a centred build.
+   `set_map_size` (8 to 128 tiles a side) keeps the top-left origin and does
+   not move what is placed, so shrinking it afterwards cuts into a centred build.
 2. **Surfaces** — a terrain slot for ground that must BLEND, `place_pattern`
    for a tiled floor, `draw_path`/`paint_path` for a trail, fence line or
    shadow strip, `add_water` for actual water. Plan the line work too: a
@@ -407,7 +407,9 @@ Then capture a whole-map `export_map` and check that regions built apart still r
 as one place — consistent materials, an unbroken route, and emphasis where the
 plan put it. Run the composition audit, then
 [visual review](../battlemap-visual-review/SKILL.md). Make at most three
-targeted repairs, capture again, and finish with a final checkpoint.
+targeted repairs, capture again, and finish with a final checkpoint. If you
+loaded a trace image, call `set_trace_image(clear=true)` before that save: the
+trace saves with the map, as an absolute path nobody else's machine has.
 
 ## 10. Deliver it
 

@@ -4,6 +4,44 @@ What changed in each release, written for the people using it. Versions cover
 the companion, the Dungeondraft mod and the map-making skills together; the
 wire protocol between them is versioned separately and is currently 25.
 
+## 1.0.3 — 2026-09-24
+
+Fixes for resizing maps, water, JPG exports and the placement checks.
+
+**Resized maps open again.** Resizing a map left its terrain, cave and floor
+layers at the old size. The saved file then froze Dungeondraft when it was
+reopened. Resizing now uses Dungeondraft's own Change Map Size, so everything
+resizes together and painted ground past the old edge survives a reopen. Maps
+can be 8 to 128 tiles a side, the limits of that resize.
+
+**Water keeps its colour.** Styling water made it vanish until the map was
+reopened. The chosen colours were also lost on reopen, which brought back
+Dungeondraft's default teal. Water now stays visible, keeps its colours when
+saved, and new water on a level takes the colours already used there.
+
+**JPG and WebP exports match the editor.** They were saved at a quality of
+zero, which made blocky ground and wrong colours. They now render at quality
+90, and your assistant can choose another quality.
+
+**Large batches don't go through the conversation.** Your assistant can put
+up to 1,000 object placements in a file and place them in one step, which one
+undo reverses. Before, it had to type every placement into the chat.
+
+**Fewer false alarms from the placement check.** Posts and beams set over wall
+corners, as the building guidance recommends, no longer count as crossing a
+wall. Wall torches beside a door are no longer reported as far from the wall.
+
+**Clearer messages.** When Dungeondraft is running but busy, for example still
+loading or waiting on a dialog, you're told that instead of being asked whether
+it's running. A trace image path that's too long for Windows is copied
+somewhere shorter. The help no longer says trace images aren't saved with the
+map, because they are. A Windows path given to a companion running under WSL
+is refused with the `/mnt/c/...` form of the same file.
+
+**Trace images show up.** A trace image loaded on a new map was saved with it
+but never appeared in the editor. It now shows when it loads and hides when it
+is cleared. Exports still leave it out.
+
 ## 1.0.2 — 2026-09-23
 
 Cleaner Windows downloads, and a way to hear about the next version.

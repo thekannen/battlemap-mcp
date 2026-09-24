@@ -164,6 +164,15 @@ reviewing it, and the bridge appeared to cross nothing. `get_status` reporting
 `layers.water: true` only means water exists somewhere; it says nothing about
 whether a viewer can tell.
 
+**Frozen water is a material, not water.** An iced-over stream, a frozen pond
+or a sheet of ice is `paint_material` with a Materials asset such as
+`textures/materials/ice_tile.png`. Its defaults, layer -400 and a smooth edge,
+are the right ones: the patch sits below the banks and cliffs, and their paths
+overlap its edge so the ice reads as tucked under them. `add_water` gives
+moving water with ripples and a shoreline, which is the wrong substance.
+Building a frozen stream from water bodies gets both the look and the
+behaviour wrong; one ice material stroke is the right tool.
+
 ## Nothing grows on a map by itself
 
 An exterior can pass every structural check and still look like mown municipal

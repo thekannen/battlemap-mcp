@@ -14,6 +14,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import io
+import json
 import os
 import re
 import time
@@ -649,6 +650,11 @@ def _wait_for_save(
     }
 
 
+# Dungeondraft's Change Map Size window clamps each side to this range, measured
+# on 1.2: 129 tiles stopped at 128 and 1 at 8. The bridge refuses the same.
+MAP_TILES_MIN = 8
+MAP_TILES_MAX = 128
+
 MAX_SEARCHES = 8
 # The most assets one multi-term call returns in total. A term's own `limit`
 # still applies; this is what stops several generous terms compounding into one
@@ -1211,6 +1217,9 @@ def validate_placements(tolerance_woxels: float = DEFAULT_TOLERANCE) -> dict:
       crossing_walls    an object with real footprint on BOTH sides of a wall.
                         Sitting flush against a wall is correct placement and
                         is never reported.
+      wall_caps         posts, pillars and beams on layer 700+ set over a
+                        wall, or anything there covering a wall join: the caps
+                        the skills ask for. Advice; never changes `ok`.
       blocking_portals  an object standing in a doorway or across a window.
       unmeasurable      objects the bridge returned no texture_size for, so
                         nothing could be checked. Not the same as clean; if
@@ -1223,16 +1232,12 @@ def validate_placements(tolerance_woxels: float = DEFAULT_TOLERANCE) -> dict:
                         from any wall. Matched by asset name, so read the
                         reported distance and decide.
 
-    Dressing a surface is NOT reported: a tankard on a table, bread on a
-    bench, a lantern on a post. Those sit on a higher layer than what they
-    rest on, which is how `stacked` tells the two apart — same layer, both
-    large, heavily overlapping.
+    Dressing a surface is NOT reported: a tankard on a table sits on a higher
+    layer than the table, which is how `stacked` tells the two apart.
 
-    Footprints are rotation-aware; `fit_elements` bounds are not, so every
-    rotated object would read as a defect if you checked from those.
-
-    A finding is evidence, not a verdict — read the position and decide. A
-    hearth set INTO a thick wall is a deliberate choice this will report.
+    Footprints are rotation-aware (`fit_elements` bounds are not). A finding
+    is evidence, not a verdict: a hearth set INTO a thick wall is deliberate
+    and will be reported.
 
     tolerance_woxels: how far past a wall's centre line an object may reach on
       both sides before it counts as crossing. The default (24) keeps flush
@@ -1406,7 +1411,7 @@ class PlacedObject(BaseModel):
 
 
 @tool()
-def place_objects(objects: list[PlacedObject]) -> dict:
+def place_objects(objects: list[PlacedObject] | None = None, file: str = "") -> dict:
     """Place many objects at chosen positions in ONE call and ONE undo step.
 
     Use it whenever you know where several things go: a row of tables, the
@@ -1416,9 +1421,15 @@ def place_objects(objects: list[PlacedObject]) -> dict:
     `scatter_objects` is for RANDOM arrangement over an area; this is for
     deliberate positions.
 
-    Up to 100 entries. Every asset is checked before anything is placed, and if
-    one entry fails the whole batch is rolled back, so the map never holds a
-    half-finished batch whose ids you were not told.
+    Up to 100 entries in `objects`. Every asset is checked before anything is
+    placed, and if one entry fails the whole batch is rolled back, so the map
+    never holds a half-finished batch whose ids you were not told.
+
+    file: an absolute path to a JSON file of the same entries (a list, or
+      {"objects": [...]}), up to 1000. Use it when a script computed the
+      positions: write the file and pass its path instead of copying hundreds
+      of entries into the call. The reply is compact: `placed`, `id_ranges`
+      ([first, last] runs of ids) and `colorable_without_color`.
 
     Returns `objects`: one {id, position, layer} per entry, in the order you
     passed them, plus `ids`. Entries placed from a colourable asset with no
@@ -1430,63 +1441,122 @@ def place_objects(objects: list[PlacedObject]) -> dict:
     A batch placed entirely at scale 1.0 on quarter turns comes back with an
     `arrangement_note`: most placements read better with slight variation.
     """
-    if not objects:
+    if file and objects:
+        raise ValidationError("give objects or file, not both")
+    if file:
+        entries: list = _batch_file(file)
+        limit = FILE_BATCH_LIMIT
+    else:
+        entries = list(objects or [])
+        limit = BATCH_LIMIT
+    if not entries:
         raise ValidationError("objects must not be empty")
-    if len(objects) > BATCH_LIMIT:
+    if len(entries) > limit:
         raise ValidationError(
-            f"{len(objects)} objects is past the {BATCH_LIMIT} one call places; "
+            f"{len(entries)} objects is past the {limit} one call places; "
             "split it, or use scatter_objects for incidental detail"
         )
-    items: list[dict] = []
-    for index, entry in enumerate(objects):
-        where = f"objects[{index}]"
-        # An MCP caller's entries arrive validated; a Python caller's are plain
-        # dicts, and both have to behave the same way.
-        if isinstance(entry, PlacedObject):
-            item = entry
-        else:
-            try:
-                item = PlacedObject.model_validate(entry)
-            except PydanticValidationError as invalid:
-                raise ValidationError(f"{where}: {invalid.errors()[0]['msg']}") from invalid
-        if not item.asset:
-            raise ValidationError(f"{where} needs an asset path from list_assets")
-        require_positive(item.scale, f"{where}.scale")
-        require_choice(item.sorting, [0, 1], f"{where}.sorting")
-        require_choice(item.layer, list(range(-500, 1000, 100)), f"{where}.layer")
-        require_finite(item.x, f"{where}.x")
-        require_finite(item.y, f"{where}.y")
-        require_finite(item.rotation, f"{where}.rotation")
-        require_hex_color(item.color, f"{where}.color")
-        require_hex_color(item.modulate, f"{where}.modulate")
-        if item.modulate:
-            raise ValidationError(
-                f"{where}.modulate is unavailable because Dungeondraft does not preserve it "
-                "when saving and reopening. No changes were made."
-            )
-        params: dict = {
-            "asset": item.asset,
-            "scale": item.scale,
-            "rotation": item.rotation,
-            "sorting": item.sorting,
-            "layer": item.layer,
-        }
-        if item.x is not None:
-            params["x"] = item.x
-        if item.y is not None:
-            params["y"] = item.y
-        if item.color:
-            params["color"] = item.color
-        if item.modulate:
-            params["modulate"] = item.modulate
-        if item.block_light is not None:
-            params["block_light"] = item.block_light
-        items.append(params)
-    result = bridge.request("place_objects", objects=items)
+    items = [_batch_params(entry, f"objects[{index}]") for index, entry in enumerate(entries)]
+    if file:
+        result = bridge.request("place_objects", objects=items, compact=True)
+    else:
+        result = bridge.request("place_objects", objects=items)
     note = arrangement.batch_note(items)
     if note and isinstance(result, dict):
         result["arrangement_note"] = note
     return result
+
+
+FILE_BATCH_LIMIT = 1000
+FILE_BATCH_BYTES = 4 * 1024 * 1024
+
+
+_WINDOWS_DRIVE = re.compile(r"([A-Za-z]):[\\/](.*)\Z", re.DOTALL)
+
+
+def _wsl_hint(file: str) -> str:
+    """How a Windows drive path reads to a server under WSL, or "".
+
+    Only reached when the path is not absolute here, i.e. on a POSIX server:
+    `C:/...` was refused from WSL and the same file loaded as `/mnt/c/...`
+    (measured 2026-09-24).
+    """
+    match = _WINDOWS_DRIVE.match(file)
+    if not match:
+        return ""
+    rest = match.group(2).replace("\\", "/")
+    return (
+        f". This server runs on Linux or macOS, where {file} is not a path; "
+        f"if it runs under WSL, the same file is /mnt/{match.group(1).lower()}/{rest}"
+    )
+
+
+def _batch_file(file: str) -> list:
+    """The entries of a place_objects batch file, or a ValidationError saying why not."""
+    path = Path(file)
+    if not path.is_absolute():
+        raise ValidationError("file must be an absolute path to a .json file" + _wsl_hint(file))
+    if path.suffix.lower() != ".json":
+        raise ValidationError("file must be a .json file of place_objects entries")
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise ValidationError(f"cannot read {file}: {exc.strerror or exc}") from exc
+    if size > FILE_BATCH_BYTES:
+        raise ValidationError(f"{file} is {size} bytes; batch files are capped at 4 MB")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValidationError(f"{file} is not readable JSON: {exc}") from exc
+    if isinstance(data, dict):
+        data = data.get("objects")
+    if not isinstance(data, list):
+        raise ValidationError(f'{file} must hold a list of entries, or {{"objects": [...]}}')
+    return data
+
+
+def _batch_params(entry: object, where: str) -> dict:
+    """One place_objects entry, validated and turned into bridge params."""
+    # An MCP caller's entries arrive validated; a Python caller's and a file's
+    # are plain dicts, and all of them have to behave the same way.
+    if isinstance(entry, PlacedObject):
+        item = entry
+    else:
+        try:
+            item = PlacedObject.model_validate(entry)
+        except PydanticValidationError as invalid:
+            raise ValidationError(f"{where}: {invalid.errors()[0]['msg']}") from invalid
+    if not item.asset:
+        raise ValidationError(f"{where} needs an asset path from list_assets")
+    require_positive(item.scale, f"{where}.scale")
+    require_choice(item.sorting, [0, 1], f"{where}.sorting")
+    require_choice(item.layer, list(range(-500, 1000, 100)), f"{where}.layer")
+    require_finite(item.x, f"{where}.x")
+    require_finite(item.y, f"{where}.y")
+    require_finite(item.rotation, f"{where}.rotation")
+    require_hex_color(item.color, f"{where}.color")
+    require_hex_color(item.modulate, f"{where}.modulate")
+    if item.modulate:
+        raise ValidationError(
+            f"{where}.modulate is unavailable because Dungeondraft does not preserve it "
+            "when saving and reopening. No changes were made."
+        )
+    params: dict = {
+        "asset": item.asset,
+        "scale": item.scale,
+        "rotation": item.rotation,
+        "sorting": item.sorting,
+        "layer": item.layer,
+    }
+    if item.x is not None:
+        params["x"] = item.x
+    if item.y is not None:
+        params["y"] = item.y
+    if item.color:
+        params["color"] = item.color
+    if item.block_light is not None:
+        params["block_light"] = item.block_light
+    return params
 
 
 @tool()
@@ -2168,16 +2238,27 @@ def set_trace_image(
     center: centre the image on the map.
     clear: remove the trace image.
 
-    It is per-EDITOR state, not part of the map, so it does not save with the
-    map and other people will not see it.
+    Loading an image shows it and clear hides it. `visible` says whether it is
+    drawn now and `image_size` is null if the image did not load. Exports never
+    include it.
+
+    The trace SAVES with the map: its absolute path, scale, opacity and position
+    go into the file and it reloads next time. Anyone else who opens the map gets
+    a path that doesn't exist on their machine, and a large reference makes every
+    open slow. Call set_trace_image(clear=true) before the final save_map.
+
+    A path Windows can't open (260+ characters, typical of agent temp folders)
+    is copied to a short path in the bridge's output folder first; the response
+    says so under `copied_from`.
     """
     if opacity is not None and not 0.0 <= opacity <= 1.0:
         raise ValidationError(f"opacity must be between 0 and 1, got {opacity}")
     if scale is not None:
         require_positive(scale, "scale")
     params: dict = {}
+    copied_from = None
     if path:
-        params["path"] = path
+        params["path"], copied_from = _short_trace_path(path)
     if scale is not None:
         params["scale"] = scale
     if opacity is not None:
@@ -2188,7 +2269,37 @@ def set_trace_image(
         params["clear"] = True
     if not params:
         raise ValidationError("give at least one of path, scale, opacity, center or clear")
-    return bridge.request("set_trace_image", **params)
+    result = bridge.request("set_trace_image", **params)
+    if copied_from is not None:
+        result["copied_from"] = copied_from
+    return result
+
+
+TRACE_PATH_LIMIT = 240
+TRACE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
+
+
+def _short_trace_path(path: str) -> tuple[str, str | None]:
+    """`path`, or a copy of it at a short path when Dungeondraft couldn't open it.
+
+    Only images are copied, only when the path is too long, and only when this
+    process can read the file. A server that can't see it (another machine,
+    WSL) passes the path through and lets the bridge report it.
+    """
+    source = Path(path)
+    if len(path) < TRACE_PATH_LIMIT or source.suffix.lower() not in TRACE_SUFFIXES:
+        return path, None
+    try:
+        data = source.read_bytes()
+    except OSError:
+        return path, None
+    root = _capture_root()
+    root.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(data).hexdigest()[:16]
+    target = root / f"trace-{digest}{source.suffix.lower()}"
+    if not target.exists():
+        target.write_bytes(data)
+    return str(target), path
 
 
 @tool()
@@ -2242,8 +2353,10 @@ def set_water_style(
     Geometry first (add_water), then this. A muddy river, a clear shallow, a
     peat swamp and a deep cold pool are the same mesh with different colour.
 
-    Per LEVEL, not per water body: every pool on this level shares it. The
-    response reads the values back off the mesh rather than echoing the request.
+    Per LEVEL: every body of water on this level is restyled, and water drawn
+    later on a level whose bodies share one style takes that style too. The
+    response reads the style back off the water bodies, which are what the map
+    saves; `bodies` is how many there are, and `mixed_styles` means they differ.
     """
     require_hex_color(deep_color, "deep_color")
     require_hex_color(shallow_color, "shallow_color")
@@ -2519,7 +2632,9 @@ def add_water(
     points: [[x, y], ...] with at least 3 points, for an irregular shape — a
       pond, a river bend, a cave lake. The outline closes automatically.
 
-    Call it repeatedly to build up several separate bodies of water.
+    Call it repeatedly to build up several separate bodies of water. When the
+    level's existing water shares one style (set_water_style), new water takes
+    it too and the response says `matched_level_style`.
     """
     if points is not None:
         require_points(points, minimum=3)
@@ -3128,13 +3243,17 @@ def add_level(label: str = "Level") -> dict:
 
 
 @tool()
-def set_map_size(width: int, height: int) -> dict:
+def set_map_size(
+    width: Annotated[int, Field(ge=MAP_TILES_MIN, le=MAP_TILES_MAX)],
+    height: Annotated[int, Field(ge=MAP_TILES_MIN, le=MAP_TILES_MAX)],
+) -> dict:
     """Resize the current map, in TILES (a tile is 256 woxels).
 
-    Dungeondraft's new-map dialog is only reachable before a map is open, which
-    is before mods load — so this is the way to get the map dimensions you want.
-    Set the size before laying anything out. Existing content is not moved or
-    clipped; only the canvas bounds change.
+    Uses Dungeondraft's own Change Map Size resize, so every level's terrain,
+    cave and floor-tile rasters are resized and the saved map reopens. Each
+    side must be 8 to 128 tiles. The top-left origin is kept: the map grows or
+    shrinks on the right and bottom, nothing placed is moved, and shrinking
+    does not delete what ends up outside. Set the size before laying out.
     """
     return bridge.request("set_map_size", width=width, height=height)
 
@@ -3288,6 +3407,7 @@ def export_map(
     format: str = "png",
     timeout: float = EXPORT_WAIT_DEFAULT,
     max_px: int | None = None,
+    quality: Annotated[int, Field(ge=1, le=100)] = 90,
 ) -> list[Image | str]:
     """Render the entire current map to a clean image (no UI) and return it.
 
@@ -3296,7 +3416,8 @@ def export_map(
     word, so one that large is refused up front with the highest ppi this map
     allows.
 
-    format: 'png' (default), 'jpg' or 'webp'.
+    format: 'png' (default), 'jpg' or 'webp'. quality (1-100, default 90)
+      applies to jpg and webp.
 
     The render is a tracked operation: this waits up to `timeout` seconds
     (max 600). If that runs out, the error names the operation; collect the
@@ -3319,7 +3440,9 @@ def export_map(
     _require_wait(timeout)
     _require_max_px(max_px)
     ext = "jpg" if format.lower() == "jpeg" else format.lower()
-    started = bridge.request("export_map", name=f"export-{uuid4().hex}.{ext}", ppi=ppi, format=ext)
+    started = bridge.request(
+        "export_map", name=f"export-{uuid4().hex}.{ext}", ppi=ppi, format=ext, quality=quality
+    )
     return _export_image(_wait_for_operation(str(started["operation_id"]), timeout), max_px)
 
 

@@ -561,10 +561,14 @@ def layers(u: Uat) -> None:
         ]
         u.c.request("add_water", points=pts)
         assert u.c.request("get_status")["layers"]["water"] is True, "water layer not set"
+        style = u.c.request("set_water_style", deep_color="#3f9fdc", shallow_color="#8fd3f0")
+        assert u.c.request("get_status")["layers"]["water"] is True, "styling erased the water"
+        assert style.get("bodies", 0) >= 1, f"no bodies read back: {style}"
+        assert style.get("deep_color") == "#3f9fdc", f"bodies not restyled: {style}"
         u.c.request("add_water", points=pts, invert=True)
-        return "polygon drawn, then erased with invert"
+        return f"drawn, styled ({style.get('bodies')} bodies #3f9fdc) and still drawn, erased"
 
-    u.check("add_water draws and inverts", water, needs_dirty=True)
+    u.check("add_water draws, styles and inverts", water, needs_dirty=True)
 
     def caves():
         u.c.request("dig_cave", points=[[u.cx + 2500, u.cy + 2000]], radius=250.0)
@@ -613,6 +617,58 @@ def capture(u: Uat) -> None:
         return f"{p.name}, {p.stat().st_size // 1024} KB"
 
     u.check("screenshot writes a real file", shot)
+
+    def trace_shows():
+        import importlib
+        import tempfile
+
+        from PIL import Image
+
+        def magenta(path) -> int:
+            with Image.open(path) as image:
+                raw = image.convert("RGB").tobytes()
+            return sum(
+                1
+                for i in range(0, len(raw), 3)
+                if raw[i] - raw[i + 1] > 100 and raw[i + 2] - raw[i + 1] > 100
+            )
+
+        u.c.request("set_camera", x=u.cx, y=u.cy, zoom=2.0)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
+            source = pathlib.Path(handle.name)
+        Image.new("RGB", (768, 768), (255, 0, 255)).save(source)
+        cleared: dict = {}
+        try:
+            baseline = magenta(u.c.request("screenshot")["path"])
+            shown = u.c.request("set_trace_image", path=str(source), opacity=1.0, center=True)
+            assert shown.get("visible") is True, f"loaded but not visible: {shown}"
+            assert shown.get("image_size") == [768, 768], f"image not loaded: {shown}"
+            lit = magenta(u.c.request("screenshot")["path"])
+            # A guide must not reach a render. Dungeondraft's exporter hides it.
+            server = importlib.import_module("battlemap_mcp.server")
+            _, caption = server.export_map(ppi=16, format="png")
+            exported = magenta(caption.split("saved: ", 1)[1].split("\n", 1)[0])
+            assert exported == 0, f"{exported} trace pixels in an export"
+            relit = magenta(u.c.request("screenshot")["path"])
+            assert relit > baseline + 2000, f"the trace did not come back after an export: {relit}"
+            cleared = u.c.request("set_trace_image", clear=True)
+            assert cleared.get("visible") is False, f"cleared but still visible: {cleared}"
+            after = magenta(u.c.request("screenshot")["path"])
+        finally:
+            if not cleared:
+                # A trace left loaded shows in every later screenshot and export.
+                u.c.request("set_trace_image", clear=True)
+            source.unlink(missing_ok=True)
+        assert lit > baseline + 2000, (
+            f"reported visible, but {lit} trace pixels on screen ({baseline} before)"
+        )
+        assert after <= baseline, f"{after} trace pixels remain after clear ({baseline} before)"
+        return (
+            f"trace pixels on screen: {baseline} -> {lit} loaded -> {relit} after an export "
+            f"(0 in it) -> {after} cleared"
+        )
+
+    u.check("a loaded trace image shows, and clear hides it", trace_shows, needs_dirty=True)
 
     def exports():
         import base64
@@ -1011,10 +1067,12 @@ def levels(u: Uat) -> None:
         u.c.request("set_map_size", width=w + 2, height=h + 2)
         grew = u.c.request("get_status")["map_size_woxels"]
         assert grew != st, f"size unchanged: {st}"
+        splat = u.c.request("get_terrain", rect=[0, 0, 256, 256])["splat_size"]
+        assert splat == [(w + 2) * 4, (h + 2) * 4], f"splat {splat} after resize to {w + 2}x{h + 2}"
         u.c.request("set_map_size", width=w, height=h)
         back = u.c.request("get_status")["map_size_woxels"]
         assert back == st, f"not restored: {back} vs {st}"
-        return f"{st} -> {grew} -> restored"
+        return f"{st} -> {grew} (splat {splat}) -> restored"
 
     u.check("set_map_size resizes and restores", resize, needs_dirty=True)
 
@@ -2058,6 +2116,34 @@ def batch(u: Uat) -> None:
     u.check(
         "batch: a coloured batch undo leaves ObjectTool usable",
         coloured_batch_leaves_the_tool_usable,
+        needs_dirty=True,
+    )
+
+    def file_sized_batch_is_one_undo_step():
+        """The group undo recorded only the first 500 nodes a command created, so
+        undoing 600 left 100 behind with the op reporting success.
+        """
+        asset = u.asset("Objects")
+        items = [
+            {"asset": asset, "x": 256 + (i % 30) * 256, "y": 256 + (i // 30) * 200}
+            for i in range(600)
+        ]
+        before = u.c.request("get_status")
+        result = u.c.request("place_objects", objects=items, compact=True)
+        after = u.c.request("get_status")
+        assert result["placed"] == 600 and "objects" not in result, sorted(result)
+        placed = sum(last - first + 1 for first, last in result["id_ranges"])
+        assert placed == 600, result["id_ranges"]
+        assert after["undo_depth"] == before["undo_depth"] + 1, "600 objects took several steps"
+        u.c.request("undo")
+        time.sleep(0.5)
+        left = u.c.request("get_status")["counts"]["objects"] - before["counts"]["objects"]
+        assert left == 0, f"one undo left {left} of 600 objects on the map"
+        return f"600 placed in one compact call ({len(result['id_ranges'])} id range) and undone"
+
+    u.check(
+        "batch: a 600-object file batch is one undo step",
+        file_sized_batch_is_one_undo_step,
         needs_dirty=True,
     )
 

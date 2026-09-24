@@ -53,6 +53,8 @@ const TRANSFORM_CMDS := ["move_element", "modify_object"]
 const DELETE_CMDS := ["delete_element"]
 
 const MAX_BATCH_ITEMS := 100
+
+const MAX_FILE_BATCH_ITEMS := 1000
 const TERRAIN_CMDS := ["fill_terrain", "fill_region", "paint_terrain", "paint_path"]
 const CAVE_CMDS := ["dig_cave", "clear_caves", "set_cave_entrance"]
 
@@ -126,7 +128,7 @@ const SAVE_STALE_MS := 60000
 
 var _assigned := []
 var _assign_seq := 0
-const ASSIGN_LOG_MAX := 2000
+const ASSIGN_LOG_MAX := 4000
 
 # Dungeondraft's layer values, as read off the layer menu (see _layer_index).
 const LAYER_MIN := -500
@@ -849,7 +851,8 @@ func _build_op(cmd, req, result, pre, terrain_before, cave_before = null,
 	elif cmd in COMPOSITE_CMDS and assign_mark >= 0:
 
 		var entries := []
-		for made_id in _assigned_since(assign_mark):
+
+		for made_id in _assigned_since(assign_mark, ASSIGN_LOG_MAX):
 			var made = Global.World.GetNodeByID(int(made_id))
 			if made != null:
 				entries.append({ "id": int(made_id), "node": made, "parent": made.get_parent() })
@@ -1441,16 +1444,23 @@ func _set_trace_image(req : Dictionary) -> Dictionary:
 		var probe = File.new()
 		if not probe.file_exists(path):
 			_release_tool(trace, was_active)
-			return _err(("no file at %s — pass an absolute path to an image on " +
-				"this machine") % path)
+
+			return _err(("Dungeondraft cannot open %s (%d characters). Either " +
+				"nothing is there, or it cannot be read from here; on Windows a " +
+				"path over 260 characters cannot be opened, so copy the image " +
+				"somewhere shorter. Pass an absolute path to an image on this " +
+				"machine.") % [path, path.length()])
 		if not trace.has_method("OnFileSelected"):
 			_release_tool(trace, was_active)
 			return _err("this build exposes no TraceImage.OnFileSelected")
 		trace.OnFileSelected("Image", path)
 		applied["path"] = path
+
+		_set_trace_visible(true)
 	if bool(req.get("clear", false)) and trace.has_method("OnFileCleared"):
 		trace.OnFileCleared("Image")
 		applied["cleared"] = true
+		_set_trace_visible(false)
 	if req.has("scale") and trace.has_method("SetScale"):
 		trace.SetScale(float(req["scale"]))
 		applied["scale"] = float(req["scale"])
@@ -1463,7 +1473,24 @@ func _set_trace_image(req : Dictionary) -> Dictionary:
 	_release_tool(trace, was_active)
 	if applied.empty():
 		return _err("give at least one of path, scale, opacity, center or clear")
+	# Read back what is drawn, not what was asked: the Sprite, not the flag.
+	var sprite = Global.World.get("TraceImage")
+	var drawn := false
+	var size = null
+	if sprite != null and is_instance_valid(sprite) and sprite is Sprite:
+		drawn = sprite.is_visible_in_tree() and sprite.texture != null
+		if sprite.texture != null:
+			size = [sprite.texture.get_width(), sprite.texture.get_height()]
+	applied["visible"] = drawn
+	applied["image_size"] = size
 	return _ok(applied)
+
+func _set_trace_visible(value : bool) -> void:
+	if Global.World.has_method("set_TraceImageVisible"):
+		Global.World.set_TraceImageVisible(value)
+	var sprite = Global.World.get("TraceImage")
+	if sprite != null and is_instance_valid(sprite) and sprite is CanvasItem:
+		sprite.visible = value
 
 func _map_style_snapshot():
 	if Global.World.GetCurrentLevel() == null: return null
@@ -1533,33 +1560,112 @@ func _set_water_style(req : Dictionary) -> Dictionary:
 	var water = level.get("WaterMesh")
 	if water == null:
 		return _err("this level exposes no WaterMesh")
+	if not water.has_method("Save") or not water.has_method("Load") \
+			or not water.has_method("UpdateMesh"):
+		return _err("this build's WaterMesh cannot be restyled (no Save/Load/UpdateMesh)")
 	var bad_water_color = _bad_color(req, ["deep_color", "shallow_color"])
 	if bad_water_color != null: return bad_water_color
-	if req.has("deep_color") and str(req.get("deep_color", "")) != "":
-		water.set("DeepColor", _color(req["deep_color"], Color(0.09, 0.19, 0.33)))
-	if req.has("shallow_color") and str(req.get("shallow_color", "")) != "":
-		water.set("ShallowColor", _color(req["shallow_color"], Color(0.25, 0.45, 0.5)))
+	var blend = null
 	if req.has("blend_distance"):
-		var blend = float(req["blend_distance"])
+		blend = float(req["blend_distance"])
 		if blend < 0.0:
 			return _err("'blend_distance' cannot be negative")
-		water.set("BlendDistance", blend)
+	var deep = null
+	if str(req.get("deep_color", "")) != "":
+		deep = _color(req["deep_color"], Color(0.09, 0.19, 0.33))
+	var shallow = null
+	if str(req.get("shallow_color", "")) != "":
+		shallow = _color(req["shallow_color"], Color(0.25, 0.45, 0.5))
+	# The mesh-level values are what Dungeondraft's own WaterBrush sets, so keep
+	# them in step; they are not what saves (see _recolour_water).
+	if deep != null: water.set("DeepColor", deep)
+	if shallow != null: water.set("ShallowColor", shallow)
+	if blend != null: water.set("BlendDistance", blend)
 	if req.has("border"):
-		water.set("disableBorder", not bool(req["border"]))
-	if water.has_method("CreateMesh"):
-		water.CreateMesh()
-	# Read back rather than echo: a property that did not take should be
-	# visible, not assumed.
+		if water.has_method("DisableBorder"):
+			water.DisableBorder(not bool(req["border"]))
+		else:
+			water.set("disableBorder", not bool(req["border"]))
+
+	var bodies = _recolour_water(water, deep, shallow, blend, {})
+	if bodies < 0:
+		return _err("could not read this level's water to restyle it")
+	var out = _water_style_readback(water)
+	out["bodies_restyled"] = bodies
+	return _ok(out)
+
+func _recolour_water(water, deep, shallow, blend, keep : Dictionary) -> int:
+	var data = water.Save()
+	if typeof(data) != TYPE_DICTIONARY or typeof(data.get("tree")) != TYPE_DICTIONARY:
+		return -1
+	var count = _recolour_water_node(data["tree"], deep, shallow, blend, keep, true)
+	if count > 0:
+		water.Load(data)
+	water.UpdateMesh(false)
+	return count
+
+func _recolour_water_node(node : Dictionary, deep, shallow, blend, keep : Dictionary, root : bool) -> int:
+	var count := 0
+	# The root is a container with an empty polygon and zeroed colours in every
+	# saved map; it is not a body and is left exactly as Dungeondraft wrote it.
+	if not root and not keep.has(node.get("ref")):
+		if deep != null: node["deep_color"] = deep.to_html(true)
+		if shallow != null: node["shallow_color"] = shallow.to_html(true)
+		if blend != null: node["blend_distance"] = blend
+		count += 1
+	var children = node.get("children", [])
+	if typeof(children) == TYPE_ARRAY:
+		for child in children:
+			if typeof(child) == TYPE_DICTIONARY:
+				count += _recolour_water_node(child, deep, shallow, blend, keep, false)
+	return count
+
+# Every body's style, keyed by ref, from what will actually be saved.
+func _water_bodies(water) -> Dictionary:
 	var out := {}
-	var deep = water.get("DeepColor")
-	if deep is Color: out["deep_color"] = "#" + deep.to_html(false)
-	var shallow = water.get("ShallowColor")
-	if shallow is Color: out["shallow_color"] = "#" + shallow.to_html(false)
-	var blend_now = water.get("BlendDistance")
-	if blend_now != null: out["blend_distance"] = float(blend_now)
+	var data = water.Save()
+	if typeof(data) == TYPE_DICTIONARY and typeof(data.get("tree")) == TYPE_DICTIONARY:
+		_collect_water_bodies(data["tree"], out, true)
+	return out
+
+func _collect_water_bodies(node : Dictionary, out : Dictionary, root : bool) -> void:
+	if not root:
+		out[node.get("ref")] = [str(node.get("deep_color", "")),
+			str(node.get("shallow_color", "")), float(node.get("blend_distance", 0.0))]
+	var children = node.get("children", [])
+	if typeof(children) == TYPE_ARRAY:
+		for child in children:
+			if typeof(child) == TYPE_DICTIONARY:
+				_collect_water_bodies(child, out, false)
+
+# Read the style back off the bodies, because they are what saves. A level
+# whose bodies disagree reports that rather than one of them.
+func _water_style_readback(water) -> Dictionary:
+	var out := {}
+	var bodies = _water_bodies(water)
+	out["bodies"] = bodies.size()
+	var styles := {}
+	for ref in bodies:
+		styles[str(bodies[ref])] = bodies[ref]
+	if styles.size() == 1:
+		var only = styles.values()[0]
+		out["deep_color"] = "#" + Color(only[0]).to_html(false)
+		out["shallow_color"] = "#" + Color(only[1]).to_html(false)
+		out["blend_distance"] = only[2]
+	elif styles.size() > 1:
+		out["mixed_styles"] = styles.size()
+	else:
+		# No water yet: report what the mesh holds, which is what the bridge
+		# will give the next body drawn on this level.
+		var deep = water.get("DeepColor")
+		if deep is Color: out["deep_color"] = "#" + deep.to_html(false)
+		var shallow = water.get("ShallowColor")
+		if shallow is Color: out["shallow_color"] = "#" + shallow.to_html(false)
+		var blend_now = water.get("BlendDistance")
+		if blend_now != null: out["blend_distance"] = float(blend_now)
 	var no_border = water.get("disableBorder")
 	if no_border != null: out["border"] = not bool(no_border)
-	return _ok(out)
+	return out
 
 func _get_terrain(req : Dictionary) -> Dictionary:
 	var level = Global.World.GetCurrentLevel()
@@ -2941,6 +3047,10 @@ func _add_water(req : Dictionary) -> Dictionary:
 		return _err("water needs a closed outline: 'rect':[x,y,w,h] or 'points' with >= 3 [x,y] pairs")
 
 	var invert = bool(req.get("invert", false))
+	var can_restyle = wm.has_method("Save") and wm.has_method("Load") and wm.has_method("UpdateMesh")
+	var before := {}
+	if can_restyle:
+		before = _water_bodies(wm)
 	wm.OnDrawingBegin(invert)
 	wm.DrawPolygon(pts, invert)
 	wm.OnDrawingEnd()
@@ -2948,7 +3058,18 @@ func _add_water(req : Dictionary) -> Dictionary:
 		wm.UpdateMesh(false)
 	elif wm.has_method("QueueUpdate"):
 		wm.QueueUpdate()
-	return _ok({ "added": true, "point_count": pts.size(), "inverted": invert })
+	var out := { "added": true, "point_count": pts.size(), "inverted": invert }
+
+	if can_restyle and not invert and before.size() > 0:
+		var styles := {}
+		for ref in before:
+			styles[str(before[ref])] = before[ref]
+		if styles.size() == 1:
+			var style = styles.values()[0]
+			if _recolour_water(wm, Color(style[0]), Color(style[1]),
+					float(style[2]), {}) > 0:
+				out["matched_level_style"] = true
+	return _ok(out)
 
 func _add_floor(req : Dictionary) -> Dictionary:
 	var level = Global.World.GetCurrentLevel()
@@ -3448,8 +3569,10 @@ func _place_objects(req : Dictionary) -> Dictionary:
 	var items = req.get("objects", [])
 	if typeof(items) != TYPE_ARRAY or items.empty():
 		return _err("'objects' must be a non-empty array of {asset, x, y, ...} entries")
-	if items.size() > MAX_BATCH_ITEMS:
-		return _err("'objects' is capped at %d per call" % MAX_BATCH_ITEMS)
+	var compact = bool(req.get("compact", false))
+	var cap = MAX_FILE_BATCH_ITEMS if compact else MAX_BATCH_ITEMS
+	if items.size() > cap:
+		return _err("'objects' is capped at %d per call" % cap)
 	if Global.World.GetCurrentLevel() == null:
 		return _err("no map open")
 
@@ -3504,8 +3627,30 @@ func _place_objects(req : Dictionary) -> Dictionary:
 		out_note = ("ids %s were placed from colourable assets with no color= and " +
 			"render flat RED. Colour is baked at placement: delete them and place " +
 			"again with color=\"#rrggbb\".") % str(colorable)
+	if compact:
+		# Counts and id ranges, not an entry per object: echoing 600 entries
+		# back is the token cost the file path exists to avoid.
+		var shown = colorable.slice(0, 19) if colorable.size() > 20 else colorable
+		if not colorable.empty():
+			out_note = ("%d object(s) were placed from colourable assets with no " +
+				"color= and render flat RED (ids %s%s). Colour is baked at " +
+				"placement: delete them and place again with color=\"#rrggbb\".") \
+				% [colorable.size(), str(shown), " ..." if colorable.size() > 20 else ""]
+		return _ok({ "placed": placed.size(), "id_ranges": _id_ranges(_ids_of(placed)),
+			"colorable_without_color": colorable.size(), "undoable": true,
+			"note": out_note })
 	return _ok({ "placed": placed.size(), "objects": placed,
 		"ids": _ids_of(placed), "undoable": true, "note": out_note })
+
+# [[first, last], ...] for runs of consecutive ids, in placement order.
+func _id_ranges(ids : Array) -> Array:
+	var out := []
+	for id in ids:
+		if not out.empty() and int(out[-1][1]) + 1 == int(id):
+			out[-1][1] = int(id)
+		else:
+			out.append([int(id), int(id)])
+	return out
 
 func _ids_of(entries : Array) -> Array:
 	var out := []
@@ -4145,9 +4290,9 @@ func _splat_unusable(level):
 	if img == null or img.get_width() <= 0 or img.get_height() <= 0:
 		return _err("this level's terrain splat image is empty, so terrain " +
 			"cannot be read or painted; writing to it crashes Dungeondraft. " +
-			"A map resized while its terrain was not left the saved splat at " +
-			"the wrong size and it was dropped on load. Call set_map_size with " +
-			"the map's CURRENT size to rebuild the rasters, then paint again.")
+			"A map resized by a bridge older than 1.0.3 saved its splat at " +
+			"the wrong size, and Dungeondraft dropped it on load (#162). The " +
+			"painted terrain in that file cannot be recovered from here.")
 	return null
 
 const SPLAT_PX_PER_TILE := 4
@@ -4760,32 +4905,107 @@ func _set_level(req : Dictionary) -> Dictionary:
 			% [index, now.ID, str(now.Label), id])
 	return _ok({ "current_level_id": now.ID, "label": now.Label })
 
+const MAP_SIZE_WINDOW := "ChangeMapSize"
+const MAP_TILES_MIN := 8
+const MAP_TILES_MAX := 128
+const MAP_SIZE_HANDLERS := ["_on_ChangeMapSizeWindow_about_to_show",
+	"_on_TopSpinBox_value_changed", "_on_BottomSpinBox_value_changed",
+	"_on_LeftSpinBox_value_changed", "_on_RightSpinBox_value_changed",
+	"_on_OkayButton_pressed"]
+
+func _map_size_window():
+	var windows = Global.Editor.get("Windows") if Global.Editor != null else null
+
+	if typeof(windows) != TYPE_DICTIONARY or not windows.has(MAP_SIZE_WINDOW):
+		return null
+	var win = windows[MAP_SIZE_WINDOW]
+	if win == null or not is_instance_valid(win):
+		return null
+	for m in MAP_SIZE_HANDLERS:
+		if not win.has_method(m):
+			return null
+	for side in ["Top", "Bottom", "Left", "Right"]:
+		if win.find_node(side + "SpinBox", true, false) == null:
+			return null
+	return win
+
+func _map_size_side(win, side : String, value : int) -> void:
+	var spin = win.find_node(side + "SpinBox", true, false)
+	# set_value alone emits value_changed only when the value differs from what
+	# the box already shows, so call the handler as well; it only records the
+	# number, and repeating it is harmless.
+	spin.set_value(float(value))
+	win.call("_on_%sSpinBox_value_changed" % side, float(value))
+
 func _set_map_size(req : Dictionary) -> Dictionary:
 	if not req.has("width") or not req.has("height"):
 		return _err("'width' and 'height' are required, in tiles")
 	var w = int(req["width"])
 	var h = int(req["height"])
-	if w < 1 or h < 1:
-		return _err("width and height must be at least 1 tile")
-	if w > 512 or h > 512:
-		return _err("refusing a map larger than 512x512 tiles")
-	Global.World.set_Width(w)
-	Global.World.set_Height(h)
+	# The window clamps each side to 8..128 tiles, measured: 129 stopped at 128
+	# and 1 at 8. Refuse up front rather than resize to a size nobody asked for.
+	if w < MAP_TILES_MIN or h < MAP_TILES_MIN or w > MAP_TILES_MAX or h > MAP_TILES_MAX:
+		return _err("width and height must each be %d to %d tiles; Dungeondraft's resize allows no other size"
+			% [MAP_TILES_MIN, MAP_TILES_MAX])
+	var win = _map_size_window()
+	if win == null:
+		# Never fall back to the property setters: that is the path that wrote
+		# maps Dungeondraft could not reopen.
+		return _err("this Dungeondraft build does not expose the Change Map " +
+			"Size window, so the map cannot be resized safely. Create the map " +
+			"at the size you need from Dungeondraft's New Map dialog instead")
+	var old_w = int(Global.World.Width)
+	var old_h = int(Global.World.Height)
+	var right : int = w - old_w
+	var bottom : int = h - old_h
+	var steps := 0
 
-	var resized := 0
+	var limit := 64
+	var probe = win.find_node("RightSpinBox", true, false)
+	if probe != null and probe.get("max_value") != null:
+		limit = max(1, int(min(abs(probe.min_value), probe.max_value)))
+	while (right != 0 or bottom != 0) and steps < 32:
+		var dr = int(clamp(right, -limit, limit))
+		var db = int(clamp(bottom, -limit, limit))
+		win.call("_on_ChangeMapSizeWindow_about_to_show")
+		_map_size_side(win, "Top", 0)
+		_map_size_side(win, "Left", 0)
+		_map_size_side(win, "Right", dr)
+		_map_size_side(win, "Bottom", db)
+		win.call("_on_OkayButton_pressed")
+		right -= dr
+		bottom -= db
+		steps += 1
+	# Read back rather than trusting the dialog: the size, and every level's
+	# splat, which is what the saver writes and what broke before.
+	var now_w = int(Global.World.Width)
+	var now_h = int(Global.World.Height)
+	if now_w != w or now_h != h:
+		return _err("resize did not take: asked for %dx%d, the map is %dx%d"
+			% [w, h, now_w, now_h])
+	var stale := []
+	var checked := 0
 	for lvl in Global.World.levels:
-		if lvl != null and lvl.has_method("Resize"):
-			lvl.Resize(0, 0, w, h)
-			resized += 1
-	# WoxelDimensions is the WHOLE map in woxels, not the size of one tile —
-	# multiplying it by the tile count is how this first reported a 40x30 map as
-	# 409600 woxels wide. Read it back after the setters instead of computing it.
+		if lvl == null or lvl.Terrain == null or not lvl.Terrain.has_method("CloneSplatImage"):
+			continue
+		var img = lvl.Terrain.CloneSplatImage()
+		checked += 1
+		if img == null or img.get_width() != w * SPLAT_PX_PER_TILE \
+				or img.get_height() != h * SPLAT_PX_PER_TILE:
+			stale.append(lvl.ID)
+	if stale.size() > 0:
+		return _err("the map is %dx%d but the terrain of level(s) %s was not " % [w, h, str(stale)] +
+			"resized with it; do not save this map. Reopen it and create the " +
+			"map at size from Dungeondraft's New Map dialog")
 	return _ok({ "width_tiles": w, "height_tiles": h,
+		"previous_tiles": [old_w, old_h],
 		"map_size_woxels": [Global.World.WoxelDimensions.x,
 			Global.World.WoxelDimensions.y],
-		"levels_resized": resized,
-		"note": "existing content is not moved or clipped; the canvas bounds " +
-			"change and each level's terrain/cave rasters are resized with it" })
+		"levels_resized": checked,
+		"steps": steps,
+		"note": "the top-left origin is kept: the map grows or shrinks on the " +
+			"right and bottom. Nothing placed is moved, and shrinking does not " +
+			"delete what now lies outside the map" })
 
 # ---------------------------------------------------------------------------
 # Capture
@@ -4857,6 +5077,7 @@ const EXPORT_OVERDUE_MS := 600000
 const OPERATION_HISTORY := 16
 
 var _export_job = null
+const EXPORT_DEFAULT_QUALITY := 90
 var _operations := []
 var _operation_serial := 0
 
@@ -4892,6 +5113,11 @@ func _operation_view(job : Dictionary) -> Dictionary:
 
 func _settle_export(state : String, error : String) -> void:
 	var job = _export_job
+	# Give back the quality the user's Export window chose. The unset 0 is not
+	# worth restoring: it is what produced the broken JPGs.
+	var before = int(job.get("quality_before", -1))
+	if before >= 1 and before <= 100 and Global.Exporter.has_method("set_Quality"):
+		Global.Exporter.set_Quality(before)
 	job["state"] = state
 	job["error"] = error
 	job["finished_ms"] = OS.get_ticks_msec()
@@ -4961,13 +5187,22 @@ func _export_map(req : Dictionary) -> Dictionary:
 			"exports over %d px on a side. The most this map allows is %d ppi.")
 			% [ppi, pixels[0], pixels[1], EXPORT_MAX_PIXELS,
 			int(floor(EXPORT_MAX_PIXELS / tiles))])
+
+	var quality = int(req.get("quality", EXPORT_DEFAULT_QUALITY))
+	if quality < 1 or quality > 100:
+		return _err("quality must be 1 to 100")
 	if _camera() == null:
 		return _err("no editor camera; the exporter renders through it")
+	var quality_before = -1
+	if Global.Exporter.has_method("get_Quality") and Global.Exporter.has_method("set_Quality"):
+		quality_before = int(Global.Exporter.get_Quality())
+		Global.Exporter.set_Quality(quality)
 	_export_job = { "operation_id": "export-%d-%d" % [OS.get_unix_time(), _operation_serial],
 		"kind": "export", "state": "rendering", "path": path, "format": fmt,
 		"ppi": ppi, "pixels": pixels, "chunks_rendered": 0, "seen": {},
 		"camera_before": _camera_key(), "started_ms": OS.get_ticks_msec(),
-		"last_move_ms": -1, "finished_ms": -1, "error": "", "overdue": false }
+		"last_move_ms": -1, "finished_ms": -1, "error": "", "overdue": false,
+		"quality": quality, "quality_before": quality_before }
 	Global.Exporter.Start(mode, ppi, path)
 	return _ok(_operation_view(_export_job))
 
@@ -5708,6 +5943,7 @@ func _assign_mark() -> int:
 
 func _assigned_since(mark : int, limit : int = 500) -> Array:
 	var ids := []
+	var seen := {}
 	for entry in _assigned:
 		if int(entry["seq"]) <= mark:
 			continue
@@ -5715,7 +5951,8 @@ func _assigned_since(mark : int, limit : int = 500) -> Array:
 		if node == null:
 			continue
 		var nid = _node_id_or(node, -1)
-		if nid >= 0 and not (nid in ids):
+		if nid >= 0 and not seen.has(nid):
+			seen[nid] = true
 			ids.append(nid)
 		if ids.size() >= limit:
 			break

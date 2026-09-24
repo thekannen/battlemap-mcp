@@ -95,6 +95,13 @@ def _resolve_port() -> int:
         return DEFAULT_PORT
 
 
+BUSY_HINT = (
+    "Dungeondraft appears to be running but not answering: a map may still be "
+    "loading, a dialog may be open in the editor, or a load may have hung. "
+    "Check the Dungeondraft window before restarting it. "
+)
+
+
 class BridgeClient:
     def __init__(
         self,
@@ -300,8 +307,12 @@ class BridgeClient:
             # Nothing was sent. Safe for request() to re-resolve and retry.
             raise BridgeUnavailableError(
                 f"Could not reach the Dungeondraft MCP bridge on {self.host}:{self.port}. "
-                "Is Dungeondraft running with the Battlemap MCP Bridge mod enabled and a map open? "
-                f"({exc})"
+                + (
+                    BUSY_HINT
+                    if isinstance(exc, TimeoutError)
+                    else "Is Dungeondraft running with the Battlemap MCP Bridge mod enabled and a map open? "
+                )
+                + f"({exc})"
             ) from exc
 
         # Set the moment the command could have reached the mod. A failure
@@ -325,7 +336,7 @@ class BridgeClient:
             if not command_sent:
                 raise BridgeUnavailableError(
                     f"The bridge stopped responding on {self.host}:{self.port} during the "
-                    f"handshake ({exc}); the command was never sent."
+                    f"handshake ({exc}); the command was never sent. {BUSY_HINT}"
                 ) from exc
             # The request is ALREADY on the wire. A timeout or a reset says
             # nothing about whether the mod ran it, so this carries

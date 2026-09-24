@@ -109,3 +109,20 @@ def test_refused_connection_reports_unavailable():
     c = BridgeClient(port=1, timeout=1.0, token="t")
     with pytest.raises(BridgeUnavailableError):
         c.request("ping")
+
+
+def test_a_silent_listener_is_reported_as_a_busy_editor_not_a_missing_one():
+    """Telling the user to check whether Dungeondraft is running sent them the
+    wrong way; it was running, and the window was what needed looking at.
+    """
+    import socket
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        c = BridgeClient(port=listener.getsockname()[1], timeout=0.3, token="t")
+        with pytest.raises(BridgeUnavailableError) as exc:
+            c.request("ping")
+    message = str(exc.value)
+    assert "not answering" in message
+    assert "Is Dungeondraft running" not in message

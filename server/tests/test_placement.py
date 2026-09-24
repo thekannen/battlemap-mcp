@@ -185,3 +185,48 @@ def test_a_finding_reports_where_the_object_actually_reaches():
     x0, y0, x1, y1 = finding["bounds"]
     assert round(x1 - x0) == 200
     assert round(y1 - y0) == 800
+
+
+ROOM = {"id": 2, "loop": True, "points": [[3200, 1536], [5760, 1536], [5760, 3584], [3200, 3584]]}
+
+
+def test_corner_posts_above_the_walls_are_caps_not_crossings():
+    """The skills ask for a post over each corner on layer 700; that must not fail."""
+    posts = [
+        obj(
+            20 + i,
+            x,
+            y,
+            96,
+            96,
+            layer=700,
+            asset="res://textures/objects/furniture/pillar_wood_01.png",
+        )
+        for i, (x, y) in enumerate([(3200, 1536), (5760, 1536), (5760, 3584), (3200, 3584)])
+    ]
+    report = find_intrusions(posts, [ROOM], [])
+    assert report["crossing_walls"] == []
+    assert ids(report["wall_caps"]) == [20, 21, 22, 23]
+    assert report["ok"] is True
+
+
+def test_anything_high_over_a_wall_join_is_a_cap():
+    bracket = obj(30, 3200, 1536, 96, 96, layer=800)
+    report = find_intrusions([bracket], [ROOM], [])
+    assert ids(report["wall_caps"]) == [30]
+    assert report["ok"] is True
+
+
+def test_a_post_on_the_default_layer_still_crosses():
+    """Below 700 a post is drawn UNDER the wall: a mistake, not a cap."""
+    post = obj(40, 3200, 1536, 96, 96, layer=100, asset="res://x/pillar_wood_01.png")
+    report = find_intrusions([post], [ROOM], [])
+    assert ids(report["crossing_walls"]) == [40]
+    assert report["ok"] is False
+
+
+def test_high_furniture_mid_wall_still_crosses():
+    """Layer alone doesn't make a cap: a table through a wall is still a table."""
+    table = obj(50, 4480, 1536, 200, 200, layer=700)
+    report = find_intrusions([table], [ROOM], [])
+    assert ids(report["crossing_walls"]) == [50]
