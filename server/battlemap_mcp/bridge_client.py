@@ -100,6 +100,11 @@ BUSY_HINT = (
     "loading, a dialog may be open in the editor, or a load may have hung. "
     "Check the Dungeondraft window before restarting it. "
 )
+# Kept at module level: nested in the request below, a longer bridge name
+# pushed this line past the length limit.
+NOT_RUNNING_HINT = (
+    "Is Dungeondraft running with the Battlemap MCP Bridge mod enabled and a map open? "
+)
 
 
 class BridgeClient:
@@ -307,11 +312,7 @@ class BridgeClient:
             # Nothing was sent. Safe for request() to re-resolve and retry.
             raise BridgeUnavailableError(
                 f"Could not reach the Dungeondraft MCP bridge on {self.host}:{self.port}. "
-                + (
-                    BUSY_HINT
-                    if isinstance(exc, TimeoutError)
-                    else "Is Dungeondraft running with the Battlemap MCP Bridge mod enabled and a map open? "
-                )
+                + (BUSY_HINT if isinstance(exc, TimeoutError) else NOT_RUNNING_HINT)
                 + f"({exc})"
             ) from exc
 
