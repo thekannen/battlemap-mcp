@@ -22,11 +22,10 @@ LEVEL_TEARDOWN = re.compile(r"Global\.World\.(DeleteLevel|CreateLevel|SetLevel)\
 # Creates a node on the map. Excluded: levels, and the bridge's own settings panel.
 CREATES_MAP_NODE = re.compile(r"\.(Create(?!Level\b|ModTool\b|Label\b)\w+)\(")
 SAVEABLE_DELIBERATE: dict[str, str] = {
-    # WaterMesh.CreateMesh() rebuilds the geometry of the level's ONE existing
-    # water mesh; it creates no node, so there is nothing to mark saveable. The
-    # mesh is already part of the level and already saves itself. Matched only
-    # because the guard looks for a Create* call.
-    "_set_water_style": "CreateMesh rebuilds the level's existing WaterMesh, it creates no node",
+    # The bridge's own panel in Dungeondraft's Settings tools. CreateButton,
+    # CreateCheckButton, CreateSeparator and the rest build UI controls in the
+    # tool panel, never a node on the map, so there is nothing to save.
+    "_register_tool": "ToolPanel Create* calls build panel UI, not map nodes",
 }
 
 REARM_DELIBERATE = {
@@ -85,6 +84,18 @@ def main() -> int:
                     f"saving three times (#19, #20, #39)"
                 )
 
+        if not name.startswith("_on_panel_") and name != "_panel_write_setting":
+            if "_panel_write_setting(" in body:
+                problems.append(
+                    f"{MOD.name}: {name} writes the panel's settings file; only "
+                    f"_on_panel_* handlers, which the user drives, may do that"
+                )
+            if re.search(r"^\s*_paused\s*=", body, re.MULTILINE):
+                problems.append(
+                    f"{MOD.name}: {name} changes Pause; only the panel's "
+                    f"_on_panel_pause may, so an assistant cannot unpause itself"
+                )
+
     for p in problems:
         print(p)
     if problems:
@@ -96,7 +107,8 @@ def main() -> int:
         return 1
     print(
         "engine guards: every request colour is validated before use, every "
-        "level teardown re-arms the UI's tool, and every created node is saveable"
+        "level teardown re-arms the UI's tool, every created node is saveable, "
+        "and only the user's panel changes Pause or the panel settings"
     )
     return 0
 

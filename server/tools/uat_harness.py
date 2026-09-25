@@ -12,6 +12,7 @@ import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from battlemap_mcp.bridge_client import BridgeClient  # noqa: E402
+from battlemap_mcp.errors import BridgeCommandError  # noqa: E402
 
 LOG = pathlib.Path(os.environ.get("BATTLEMAP_MCP_LOG_FILE", "/tmp/dd.log"))
 # Keep UAT listings at the bridge's colour-mask scanning cap. The UAT requests
@@ -132,9 +133,32 @@ def engine_errors(tail: str) -> list[str]:
     return out
 
 
+class SaveTolerantClient(BridgeClient):
+    """Retries a command Dungeondraft refused because it was mid-save.
+
+    Autosaves and backups fire on their own timer, and the bridge refuses edits
+    while one runs, changing nothing. Over a long run that refusal landed in a
+    random case twice (wall_merge, then the 1000-step history case), failing a
+    test for a reason unrelated to it. No case expects the refusal, so waiting
+    it out is safe.
+    """
+
+    SAVE_WAIT = 20.0
+
+    def request(self, cmd: str, **params):
+        deadline = time.monotonic() + self.SAVE_WAIT
+        while True:
+            try:
+                return super().request(cmd, **params)
+            except BridgeCommandError as exc:
+                if "during a save are dropped" not in str(exc) or time.monotonic() > deadline:
+                    raise
+                time.sleep(0.5)
+
+
 class Uat:
     def __init__(self, dirty: bool = False):
-        self.c = BridgeClient(timeout=20)
+        self.c = SaveTolerantClient(timeout=20)
         self.dirty = dirty
         self.passed: list[str] = []
         self.failed: list[tuple[str, str]] = []

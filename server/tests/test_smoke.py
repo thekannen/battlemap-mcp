@@ -130,7 +130,7 @@ RULES_ON_TOOLS = {
     "place_object": ("baked at placement", "modulate", "flat red"),
     "modify_object": ("color is REFUSED", "modulate"),
     "scatter_objects": ("baked at placement",),
-    "undo": ("terrain / cave", "40 steps"),
+    "undo": ("terrain / cave", "1000 steps"),
     "delete_element": ("undo()", "cannot be deleted"),
     "set_camera": ("LARGER = zoomed OUT",),
     "fit_elements": ("woxels-per-pixel",),

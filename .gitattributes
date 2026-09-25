@@ -5,3 +5,6 @@
 # tools/release.py refuses to build if these ever contain a CR again.
 mod/** text=auto eol=lf
 skills/** text=auto eol=lf
+# The panel icon is a real PNG, and every PNG header holds a CR byte. It must
+# never be converted, so it is binary despite the eol=lf rule above.
+mod/**/*.png binary

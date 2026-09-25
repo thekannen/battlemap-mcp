@@ -4,6 +4,56 @@ What changed in each release, written for the people using it. Versions cover
 the companion, the Dungeondraft mod and the map-making skills together; the
 wire protocol between them is versioned separately and is currently 25.
 
+## 1.1.0 — 2026-09-25
+
+Your assistant now works with two popular Dungeondraft mods, the Custom Snap
+Mod and Moulk's Unofficial Patch, and Dungeondraft gains a settings panel where
+you can pause it, undo its last step and choose how it places things.
+
+**Custom Snap Mod support.** If you use the Custom Snap Mod, your assistant
+can now see your grid, square or hex with its spacing and offset, and place
+objects, rooms, walls, doors, paths, lights and prefabs on it, where your own
+cursor would snap. Moves and copies travel in whole grid steps.
+It reads your snap settings and never changes them. Without the mod,
+nothing changes.
+
+**Unofficial Patch support.** If you use Moulk's Unofficial Patch, your
+assistant now notices and works with it: it can resize maps up to 200 tiles,
+place things on the patch's Above Lights layer, and keep its camera, text and
+wall changes from being undone by the patch. On a level where you've turned on
+the patch's 24 terrain slots, it won't paint terrain, so it can't spoil what
+you painted. Objects you've shaped with the patch's Free Transform keep their
+shape when your assistant turns, scales or copies them, and groups you made
+stay grouped when it moves a member. Your assistant can also tell when one of
+the patch's popups is open, and keeps working while it is. Without the patch,
+the one change is that an object layer Dungeondraft doesn't have, such as 150,
+is now refused instead of being saved on a layer that doesn't exist.
+
+**A real settings panel in Dungeondraft.** Settings > Battlemap MCP Bridge now shows
+whether your assistant is connected and what it last did, and gives you
+controls:
+- **Pause AI edits** stops your assistant changing the map without closing
+  anything; it can still look, and tells you it's paused.
+- **Undo the assistant's last step.**
+- **Check for updates**, **Snap to my grid** by default, and how many
+  screenshots and exports to keep.
+
+Your assistant can read these but can't change them. The panel also has a
+proper icon instead of a blue square.
+
+**Undo a whole request.** Your assistant marks where each request starts and
+can undo all of it in one step, instead of one edit at a time. It won't undo
+anything another assistant or chat did, and it tells you if something can't
+be undone.
+
+**A failed save says so.** If Dungeondraft starts saving a map and never
+finishes, your assistant now learns at once that the file wasn't written and
+can save again, instead of waiting a minute to be told the save might still be
+running.
+
+**Tidier in the background.** Each chat's companion now closes when that
+chat ends, even in the middle of a task, instead of lingering.
+
 ## 1.0.3 — 2026-09-24
 
 Fixes for resizing maps, water, JPG exports and the placement checks.

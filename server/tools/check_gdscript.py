@@ -200,7 +200,11 @@ def check(src: str) -> list[str]:
     for pos, end, params in func_bounds:
         body = src[pos:end]
         first_line = src[:pos].count("\n") + 1
-        declared = set(re.findall(r"\b(\w+)\s*(?::|=)", params)) | {"self"}
+        # Every parameter, typed or not: `func f(op)` declares `op` as surely
+        # as `func f(op : Dictionary)`. Only the typed form used to count.
+        declared = {
+            m.group(1) for part in params.split(",") if (m := re.match(r"\s*(\w+)", part))
+        } | {"self"}
         for offset, line in enumerate(body.splitlines()):
             code = line.split("#", 1)[0]
             for d in re.findall(r"^\s*var\s+(\w+)", code):
@@ -230,15 +234,6 @@ def check(src: str) -> list[str]:
                     f"reserved word — the script will not parse"
                 )
 
-    # A line may only be continued when an opening bracket is still unclosed.
-    # GDScript has no implicit continuation: ending a statement with a trailing
-    # `+` at bracket depth zero is "Parse Error: Error parsing expression,
-    # misplaced: '\n'", which kills the whole mod subsystem for the session.
-    #
-    # The trap is that the SAME wrapped-string style is correct and used all
-    # over this file — inside _err(...), inside a dict literal — so it reads as
-    # established house style right up until it is written in a bare
-    # assignment, where it is fatal. That is exactly how it got in.
     depth = 0
     for n, line in enumerate(lines, 1):
         code = line.split("#", 1)[0]
@@ -246,15 +241,15 @@ def check(src: str) -> list[str]:
         code = re.sub(r'"(?:[^"\\]|\\.)*"', '""', code)
         # Brackets opened on THIS line count before the end-of-line test: the
         # common correct form opens its bracket and wraps in the same line.
-        depth += code.count("(") + code.count("[") + code.count("{")
-        depth -= code.count(")") + code.count("]") + code.count("}")
+        depth += code.count("(") + code.count("[")
+        depth -= code.count(")") + code.count("]")
         depth = max(depth, 0)
         stripped = code.rstrip()
         if depth == 0 and stripped.endswith(("+", "-", "*", "/", "%", "&&", "||")):
             problems.append(
-                f"{MOD.name}:{n}: line ends with an operator outside any bracket "
-                f"— GDScript will not continue it onto the next line. Wrap the "
-                f"expression in parentheses."
+                f"{MOD.name}:{n}: line ends with an operator outside any ( or [ "
+                f"— GDScript will not continue it onto the next line, and a {{ "
+                f"does not count. Wrap the expression in parentheses."
             )
 
     # `%` binds tighter than `+`, so in `"a %d " + "b %s" % [x, y]` the format

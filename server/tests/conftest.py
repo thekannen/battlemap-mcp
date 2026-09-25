@@ -36,6 +36,15 @@ def _no_update_check(monkeypatch):
     monkeypatch.setenv("BATTLEMAP_MCP_UPDATE_CHECK", "0")
 
 
+@pytest.fixture(autouse=True)
+def _isolated_panel_settings(monkeypatch, tmp_path):
+    """Never read the real Dungeondraft panel's settings from a test."""
+    from battlemap_mcp import user_settings
+
+    monkeypatch.setattr(user_settings, "path", lambda: tmp_path / "panel-settings.json")
+    monkeypatch.setattr(user_settings, "_cache", None)
+
+
 @pytest.fixture
 def create_file_symlink_or_skip():
     return _create_file_symlink_or_skip

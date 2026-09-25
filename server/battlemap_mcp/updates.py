@@ -13,14 +13,13 @@ offline, rate-limited or blocked, the companion behaves as if no update exists.
 from __future__ import annotations
 
 import json
-import os
 import re
 import threading
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import __version__, installer
+from . import __version__, installer, user_settings
 
 REPOSITORY = "thekannen/battlemap-mcp"
 RELEASES_URL = f"https://github.com/{REPOSITORY}/releases/latest"
@@ -36,8 +35,8 @@ _started = False
 
 
 def enabled() -> bool:
-    value = os.environ.get(OPT_OUT, "1").strip().lower()
-    return value not in {"0", "false", "no", "off"}
+    """The environment variable if set, else the Dungeondraft panel's setting."""
+    return user_settings.update_check(OPT_OUT)
 
 
 def cache_path() -> Path:
@@ -129,6 +128,12 @@ def start_background_check() -> None:
 
 
 def available() -> dict | None:
-    """The background check's notice, once it has finished; never blocks."""
+    """The background check's notice, once it has finished; never blocks.
+
+    Re-reads the setting, so turning the check off in Dungeondraft's panel
+    also hides a notice found earlier in the session.
+    """
+    if not enabled():
+        return None
     with _lock:
         return _result

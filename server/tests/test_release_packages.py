@@ -59,6 +59,7 @@ def test_mod_archive_has_exact_payload_bytes(checkout, tmp_path):
             "battlemap-mcp-bridge/mcp_bridge.ddmod",
             "battlemap-mcp-bridge/scripts/tools/mcp_bridge.gd",
             "battlemap-mcp-bridge/LICENSE",
+            "battlemap-mcp-bridge/icons/mcp_bridge.png",
         }
         for name in release.MOD_FILES:
             assert (
@@ -137,7 +138,7 @@ def test_payload_sources_check_out_with_lf_on_every_host():
     if git is None or not (ROOT / ".git").exists():
         pytest.skip("not a git checkout")
     release = release_module()
-    paths = [f"mod/{release.MOD_ROOT}/{name}" for name in release.MOD_FILES]
+    paths = [f"mod/{release.MOD_ROOT}/{name}" for name in release.MOD_TEXT_FILES]
     paths += [f"skills/{name}" for name in release.SKILL_FILES]
     completed = subprocess.run(
         [git, "-C", str(ROOT), "check-attr", "eol", "--", *paths],
@@ -148,6 +149,19 @@ def test_payload_sources_check_out_with_lf_on_every_host():
     lines = completed.stdout.splitlines()
     assert len(lines) == len(paths)
     assert all(line.endswith(": eol: lf") for line in lines), completed.stdout
+    # The panel icon's PNG header holds a CR byte; conversion would corrupt it.
+    icons = [
+        f"mod/{release.MOD_ROOT}/{name}"
+        for name in release.MOD_FILES
+        if name not in release.MOD_TEXT_FILES
+    ]
+    binary = subprocess.run(
+        [git, "-C", str(ROOT), "check-attr", "text", "--", *icons],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    assert all(line.endswith(": text: unset") for line in binary.stdout.splitlines()), binary.stdout
 
 
 def test_line_ending_attributes_ship_to_users():
@@ -202,27 +216,23 @@ def test_runtime_license_missing_fails_closed(tmp_path, monkeypatch):
 
 
 def test_local_artifacts_do_not_block_packaging(checkout, tmp_path):
-    """Shell metadata and the runtime mod icon are gitignored, not payload.
-
-    Both used to raise "Unexpected payload file", so a macOS checkout whose
-    mod/ folder had been opened in Finder could not build a release at all --
-    and the resulting error masked the symlink assertion above.
-    """
+    """Shell metadata is gitignored, not payload; the panel icon ships."""
     release = release_module()
     base = checkout / "mod/battlemap-mcp-bridge"
     (base / ".DS_Store").write_bytes(b"\x00\x01")
     (base / "scripts/.DS_Store").write_bytes(b"\x00\x01")
-    (base / "icons").mkdir(parents=True, exist_ok=True)
-    (base / "icons/mcp_bridge.png").write_bytes(b"\x89PNG\r\n\x1a\n")
 
     archive = release.build_mod(checkout, tmp_path / "out", "0.2.0")
     with zipfile.ZipFile(archive) as zipped:
         names = set(zipped.namelist())
+        icon = zipped.read("battlemap-mcp-bridge/icons/mcp_bridge.png")
     assert names == {
         "battlemap-mcp-bridge/mcp_bridge.ddmod",
         "battlemap-mcp-bridge/scripts/tools/mcp_bridge.gd",
         "battlemap-mcp-bridge/LICENSE",
+        "battlemap-mcp-bridge/icons/mcp_bridge.png",
     }
+    assert icon == (ROOT / "mod/battlemap-mcp-bridge/icons/mcp_bridge.png").read_bytes()
 
 
 def test_stray_file_still_rejected_alongside_artifacts(checkout, tmp_path):
@@ -365,3 +375,19 @@ def test_windows_bootloader_compile_refuses_the_stock_bootloader(tmp_path, monke
     assert release.compile_windows_bootloader(ROOT, tmp_path / "python") == (
         release.hashlib.sha256(b"compiled").hexdigest()
     )
+
+
+def test_every_server_module_is_released_and_exported():
+    """A module missing from either list builds nowhere or exports broken."""
+    import json
+
+    release = release_module()
+    modules = {p.name for p in (ROOT / "server/battlemap_mcp").glob("*.py")}
+    assert set(release.SERVER_FILES) == modules
+    # The export manifest lives only where the export is made, not in the
+    # exported tree, whose own gate runs this test too.
+    manifest = ROOT / "tools/public_export_manifest.json"
+    if not manifest.exists():
+        return
+    exported = set(json.loads(manifest.read_text()))
+    assert {f"server/battlemap_mcp/{name}" for name in modules} <= exported

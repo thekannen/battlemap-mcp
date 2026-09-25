@@ -1443,7 +1443,9 @@ def mixed_group(u: Uat) -> None:
             )
             assert set(result["moved"]) == set(ids) and len(result["moved"]) == len(ids), result
             assert not result["unsupported"] and not result["missing"], result
-            assert u.c.request("get_status")["undo_depth"] == min(depth + 1, 40)
+            assert u.c.request("get_status")["undo_depth"] == min(
+                depth + 1, u.c.request("get_status")["max_undo"]
+            )
             after = {i: u.c.request("get_element", id=i) for i in ids}
             for i in ids:
                 a, c = before[i], after[i]
@@ -1658,7 +1660,9 @@ def map_style(u: Uat) -> None:
         grid = "thick_line" if original["grid_style"] != "thick_line" else "dotted"
         depth = u.c.request("get_status")["undo_depth"]
         changed = u.c.request("set_map_style", building_wear=wear, grid_style=grid)
-        assert u.c.request("get_status")["undo_depth"] == min(depth + 1, 40)
+        assert u.c.request("get_status")["undo_depth"] == min(
+            depth + 1, u.c.request("get_status")["max_undo"]
+        )
         assert u.c.request("undo")["kind"] == "map_style"
         assert u.c.request("get_map_style") == original
         assert u.c.request("redo")["kind"] == "map_style"
@@ -1790,7 +1794,9 @@ def wall_merge(u: Uat) -> None:
                 result = u.c.request("merge_walls", ids=walls)
                 assert result["id"] == walls[0] and result["removed_ids"] == walls[1:]
                 assert sorted(result["portal_ids"]) == sorted(portals)
-                assert u.c.request("get_status")["undo_depth"] == min(40, depth + 1)
+                assert u.c.request("get_status")["undo_depth"] == min(
+                    u.c.request("get_status")["max_undo"], depth + 1
+                )
                 merged = [u.c.request("get_element", id=i) for i in [walls[0]] + portals]
                 assert len(merged[0]["points"]) == 3
                 listed = {
@@ -2148,6 +2154,497 @@ def batch(u: Uat) -> None:
     )
 
 
+@group("patch")
+def patch(u: Uat) -> None:
+    """Runtime behavior and validation."""
+    info = u.c.request("get_status").get("unofficial_patch") or {}
+    loaded = bool(info.get("loaded"))
+    label = f"patch {info.get('version')}" if loaded else "no patch"
+
+    def refused(cmd: str, fragment: str, **params) -> str:
+        try:
+            u.c.request(cmd, **params)
+        except BridgeCommandError as exc:
+            assert fragment in str(exc), f"unexplained refusal: {exc}"
+            return str(exc)
+        raise AssertionError(f"{cmd} {params} was accepted")
+
+    def reports_itself():
+        ping = u.c.request("ping").get("unofficial_patch")
+        assert ping == info, f"ping {ping} and get_status {info} disagree"
+        assert "dialog_open" in u.c.request("get_status"), "get_status has no dialog_open"
+        if loaded:
+            assert info.get("version"), f"no version: {info}"
+        return f"{label}: {info}"
+
+    u.check("patch: ping and get_status report it", reports_itself)
+
+    def layers_follow_the_patch():
+        asset = u.asset("Objects", "barrel") or u.asset("Objects")
+        refused("place_object", "must be", asset=asset, x=u.cx, y=u.cy, layer=150)
+        extra = u.c.request("get_tool_layer", tool="ObjectTool").get("extra_layers")
+        if not loaded:
+            refused("place_object", "must be", asset=asset, x=u.cx, y=u.cy, layer=1100)
+            assert extra is None, f"extra layers without the patch: {extra}"
+            return "150 and 1100 refused; -500..900 only"
+        assert extra == [1100], f"extra_layers {extra}"
+        placed = u.c.request("place_object", asset=asset, x=u.cx, y=u.cy, layer=1100)
+        try:
+            got = u.c.request("get_element", id=placed["id"])["layer"]
+            assert got == 1100, f"placed on 1100, read back {got}"
+        finally:
+            u.c.request("delete_element", id=placed["id"])
+        before = u.c.request("get_tool_layer", tool="ObjectTool")["layer"]
+        try:
+            r = u.c.request("set_tool_layer", tool="ObjectTool", layer=1100)
+            assert r["applied"] and r["layer"] == 1100, r
+        finally:
+            u.c.request("set_tool_layer", tool="ObjectTool", layer=before)
+        return "1100 places, reads back and selects in ObjectTool; 150 refused"
+
+    u.check("patch: layers follow the patch", layers_follow_the_patch, needs_dirty=True)
+
+    def map_size_follows_the_patch():
+        s = u.c.request("get_status")
+        w0, h0 = (int(v / 256) for v in s["map_size_woxels"])
+        if not loaded:
+            refused("set_map_size", "8 to 128", width=129, height=h0)
+            return "129 tiles refused (8..128)"
+        refused("set_map_size", "1 to 200", width=201, height=h0)
+        r = u.c.request("set_map_size", width=150, height=h0 + 10)
+        try:
+            assert r["steps"] == 1, f"the patch's resize takes any size in one step: {r}"
+            splat = u.c.request("get_terrain", samples=2)["splat_size"]
+            assert splat == [600, (h0 + 10) * 4], f"terrain not resized: {splat}"
+        finally:
+            back = u.c.request("set_map_size", width=w0, height=h0)
+        assert back["width_tiles"] == w0 and back["height_tiles"] == h0, back
+        return f"{w0}x{h0} -> 150x{h0 + 10} in one step, terrain resized, restored; 201 refused"
+
+    u.check("patch: map size follows the patch", map_size_follows_the_patch, needs_dirty=True)
+
+
+@group("snap")
+def snap(u: Uat) -> None:
+    """The mod snaps the cursor, not the bridge, so the server snaps coordinates
+    itself with a port of the mod's math. This asks the mod for ITS answer on
+    the same points and compares, on whatever grid the user has set up. Run it
+    once per grid worth trusting: a square preset, a hex preset each way, and
+    one with an offset.
+    """
+    from battlemap_mcp import snapping
+
+    state = u.c.request("get_snap_settings")
+    if not state.get("mod_loaded"):
+        u.skipped.append(("snap group", "the Custom Snap Mod is not loaded"))
+        return
+    from battlemap_mcp import server as _server
+
+    # The server's own resolution: isometric counts only where the mod snaps
+    # it as horizontal hex (v1.2.5), never in v1.1.2.
+    grid = _server._mod_grid(state)
+    label = f"{state.get('preset')} ({grid.geometry if grid else 'unreadable'})"
+
+    def port_matches_the_mod():
+        assert grid is not None, f"settings unreadable: {state}"
+        # A spread of positions, plus points either side of every half step,
+        # where rounding rules decide the answer.
+        step = grid.interval[0]
+        points = [[37.0 + i * 211.7, 91.0 + i * 157.3] for i in range(40)]
+        points += [[step * k / 2 + d, step * k / 2 - d] for k in range(1, 20) for d in (-0.5, 0.5)]
+        mod = u.c.request("get_snap_settings", points=points)["mod_snapped"]
+        if not grid.supported:
+            assert all(m is None for m in mod), f"the mod snapped {grid.geometry}: {mod[:3]}"
+            return f"{label}: the mod does not snap it, and the port applies nothing"
+        worst = 0.0
+        for point, theirs in zip(points, mod, strict=True):
+            ours = snapping.snap(grid, *point)
+            gap = max(abs(ours[0] - theirs[0]), abs(ours[1] - theirs[1]))
+            assert gap < 0.01, f"{point}: port {ours}, mod {theirs}"
+            worst = max(worst, gap)
+        like = f" as {grid.snaps_like}" if grid.snaps_like != grid.geometry else ""
+        return f"{label}{like}: {len(points)} points agree, worst gap {worst:.4f} woxels"
+
+    u.check(f"snap: port matches the mod on {label}", port_matches_the_mod)
+
+    def placement_lands_where_the_cursor_would():
+        if not (state["settings"].get("custom_snap_enabled") and state.get("vanilla_snapping")):
+            return "skipped: snapping is not active, so 'auto' rightly moves nothing"
+        if grid is None or not grid.supported:
+            return f"skipped: {label} is not snapped"
+        asset = u.asset("Objects")
+        x, y = u.cx + 37.3, u.cy + 91.9
+        theirs = u.c.request("get_snap_settings", points=[[x, y]])["mod_snapped"][0]
+        from battlemap_mcp import server
+
+        placed = server.place_object(asset, x=x, y=y, snap="auto")
+        try:
+            got = u.c.request("get_element", id=placed["id"])["position"]
+            assert max(abs(got[0] - theirs[0]), abs(got[1] - theirs[1])) < 0.5, (got, theirs)
+        finally:
+            u.c.request("delete_element", id=placed["id"])
+        return f"({x}, {y}) placed at {got}; the mod's cursor would pick {theirs}"
+
+    u.check(
+        "snap: snap='auto' places where the user's cursor would",
+        placement_lands_where_the_cursor_would,
+        needs_dirty=True,
+    )
+
+    def every_snapping_tool_lands_on_the_grid():
+        if not (state["settings"].get("custom_snap_enabled") and state.get("vanilla_snapping")):
+            return "skipped: snapping is not active, so 'auto' rightly moves nothing"
+        if grid is None or not grid.supported:
+            return f"skipped: {label} is not snapped"
+        from battlemap_mcp import server
+
+        def on_grid(point):
+            again = snapping.snap(grid, point[0], point[1])
+            return max(abs(again[0] - point[0]), abs(again[1] - point[1])) < 0.5
+
+        made: list[int] = []
+        try:
+            room = server.build_room(
+                rect=[u.cx - 1203, u.cy - 707, 1290, 1016], floor="none", snap="auto"
+            )
+            made.append(room["wall_id"])
+            corners = u.c.request("get_element", id=room["wall_id"])["points"]
+            assert all(on_grid(p) for p in corners), f"room corners off the grid: {corners}"
+            wall = server.draw_wall(
+                [[u.cx + 333, u.cy + 17], [u.cx + 911, u.cy + 403]], snap="auto"
+            )
+            made.append(wall["id"])
+            ends = u.c.request("get_element", id=wall["id"])["points"]
+            assert all(on_grid(p) for p in ends), f"wall off the grid: {ends}"
+            thing = server.place_object(u.asset("Objects"), x=u.cx + 91, y=u.cy + 57)
+            made.append(thing["id"])
+            server.move_element(thing["id"], x=u.cx + 133, y=u.cy + 171, snap="auto")
+            moved = u.c.request("get_element", id=thing["id"])["position"]
+            assert on_grid(moved), f"move_element off the grid: {moved}"
+            server.move_elements([thing["id"]], dx=137, dy=-61, snap="auto")
+            shifted = u.c.request("get_element", id=thing["id"])["position"]
+            assert on_grid(shifted), f"move_elements left the grid: {shifted}"
+            twin = server.duplicate_object(thing["id"], dx=160, dy=30, snap="auto")
+            made.append(twin["id"])
+            copy = u.c.request("get_element", id=twin["id"])["position"]
+            assert on_grid(copy), f"duplicate off the grid: {copy}"
+            light = server.add_light(x=u.cx - 71, y=u.cy + 97, snap="auto")
+            made.append(light["id"])
+        finally:
+            if made:
+                u.c.request("delete_elements", ids=made)
+        return f"{label}: room, wall, move, group move, duplicate and light all on the grid"
+
+    u.check(
+        "snap: every snapping tool lands on the grid",
+        every_snapping_tool_lands_on_the_grid,
+        needs_dirty=True,
+    )
+
+
+@group("settings")
+def settings(u: Uat) -> None:
+    """Each is set through the file the panel writes, as a click would, and
+    checked by its effect. Any real settings file and environment overrides
+    are put back afterwards. Pause, the panel's Undo button and the panel
+    showing saved values at startup need a real click or a restart, so they
+    are checked by hand; this covers what can be driven without one.
+    """
+    import json
+    import os
+
+    from battlemap_mcp import server, updates, user_settings
+
+    path = user_settings.path()
+    saved = path.read_bytes() if path.exists() else None
+    env_names = (updates.OPT_OUT, server.CAPTURE_RETENTION_ENV)
+    env_saved = {name: os.environ.pop(name, None) for name in env_names}
+    notice_saved = updates._result
+    tick = [0]
+
+    def write(data: dict | None) -> None:
+        if data is None:
+            path.unlink(missing_ok=True)
+            return
+        path.write_text(json.dumps(data), encoding="utf-8")
+        # Two writes inside one mtime tick would read as unchanged.
+        tick[0] += 1
+        stamp = time.time() + tick[0]
+        os.utime(path, (stamp, stamp))
+
+    def shipped_defaults():
+        write(None)
+        report = server.get_status()["settings"]
+        assert updates.enabled() is True, "update check off by default"
+        assert report["update_check"] == {"value": True, "source": "default"}, report
+        assert report["capture_retention"] == {"value": 20, "source": "default"}, report
+        assert report["snap_default"] == {"value": "none", "source": "default"}, report
+        assert u.c.request("ping")["paused"] is False
+        return "update check on, keep 20 captures, place exactly, not paused"
+
+    def retention_prunes_to_the_panel_value():
+        write({"capture_retention": 3})
+        for _ in range(5):
+            server.screenshot()
+        kept = len(server._generated_capture_files())
+        assert kept == 3, f"panel said 3, {kept} captures kept"
+        write({"capture_retention": 5})
+        for _ in range(6):
+            server.screenshot()
+        kept = len(server._generated_capture_files())
+        assert kept == 5, f"panel said 5, {kept} captures kept"
+        return "3, then 5: the assistant's captures were pruned to each"
+
+    def placements_follow_the_panel_default():
+        asset = u.asset("Objects")
+        write({"snap_default": "auto"})
+        placed = server.place_object(asset, x=u.cx + 37.3, y=u.cy + 91.9)
+        try:
+            assert placed.get("snap", {}).get("mode") == "auto", placed.get("snap")
+        finally:
+            u.c.request("delete_element", id=placed["id"])
+        write({"snap_default": "none"})
+        exact = server.place_object(asset, x=u.cx + 37.3, y=u.cy + 91.9)
+        try:
+            assert "snap" not in exact, exact.get("snap")
+            got = u.c.request("get_element", id=exact["id"])["position"]
+            assert abs(got[0] - (u.cx + 37.3)) < 0.5, got
+        finally:
+            u.c.request("delete_element", id=exact["id"])
+        outcome = placed["snap"].get("reason", "applied")
+        return f"'Snap to my grid' made snap='auto' ({outcome}); 'exactly' placed as asked"
+
+    def update_notice_follows_the_panel():
+        updates._result = {"installed": "1.0.0", "latest": "9.9.9", "url": "u", "message": "m"}
+        write({"update_check": True})
+        assert "update_available" in server.get_status(), "notice missing with the check on"
+        write({"update_check": False})
+        assert updates.enabled() is False
+        assert "update_available" not in server.get_status(), "notice shown with the check off"
+        assert updates.check_now() is None, "a disabled check ran"
+        return "notice shown with the check on, hidden (and no check run) with it off"
+
+    def environment_overrides_the_panel():
+        write({"update_check": False, "capture_retention": 3})
+        os.environ[updates.OPT_OUT] = "1"
+        os.environ[server.CAPTURE_RETENTION_ENV] = "9"
+        try:
+            report = server.get_status()["settings"]
+            assert report["update_check"] == {"value": True, "source": "environment"}, report
+            assert report["capture_retention"] == {"value": 9, "source": "environment"}, report
+        finally:
+            for name in env_names:
+                os.environ.pop(name, None)
+        report = server.get_status()["settings"]
+        assert report["capture_retention"] == {"value": 3, "source": "panel"}, report
+        return "set environment variables won; unset, the panel applied again"
+
+    def pause_belongs_to_the_user():
+        assert u.c.request("get_status")["paused"] is False
+        for command, extra in (
+            ("tool_action", {"control": "mcp_pause"}),
+            ("set_tool_option", {"control": "mcp_pause", "pressed": True}),
+        ):
+            try:
+                u.c.request(command, tool="mcp_bridge", **extra)
+            except BridgeCommandError as exc:
+                assert "only the user" in str(exc), exc
+            else:
+                raise AssertionError(f"{command} reached the bridge's own panel")
+        assert u.c.request("get_status")["paused"] is False, "a command changed Pause"
+        return "not paused, and tool_action/set_tool_option cannot reach the panel"
+
+    try:
+        u.check("settings: nothing chosen means the shipped defaults", shipped_defaults)
+        u.check(
+            "settings: capture retention prunes to the panel's number",
+            retention_prunes_to_the_panel_value,
+        )
+        u.check(
+            "settings: placements follow the panel's snap default",
+            placements_follow_the_panel_default,
+            needs_dirty=True,
+        )
+        u.check("settings: the update notice follows the panel", update_notice_follows_the_panel)
+        u.check("settings: an explicit environment variable wins", environment_overrides_the_panel)
+        u.check("settings: Pause belongs to the user", pause_belongs_to_the_user)
+    finally:
+        if saved is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(saved)
+        for name, value in env_saved.items():
+            if value is not None:
+                os.environ[name] = value
+        updates._result = notice_saved
+
+
+@group("checkpoint")
+def checkpoint(u: Uat) -> None:
+    """Runtime behavior and validation."""
+    from battlemap_mcp.bridge_client import BridgeClient
+
+    def counts():
+        return {
+            kind: u.c.request("list_elements", kind=kind, limit=1)["total"]
+            for kind in ("objects", "walls", "lights")
+        }
+
+    def rollback(label):
+        """Repeat until done, as the MCP tool does: a pass stops at an object
+        an earlier step is still putting back, which happens next frame."""
+        kinds: list[str] = []
+        for _ in range(200):
+            result = u.c.request("rollback_checkpoint", label=label)
+            kinds += result["kinds"]
+            if not result["continue"]:
+                break
+            time.sleep(0.05)
+        result["kinds"], result["rolled_back"] = kinds, len(kinds)
+        return result
+
+    def resolves(ident) -> bool:
+        try:
+            return u.c.request("get_element", id=ident).get("id") == ident
+        except BridgeCommandError:
+            return False
+
+    def a_request_rolls_back_whole():
+        asset = u.asset("Objects")
+        before = counts()
+        u.c.request("checkpoint", label="uat-request")
+        wall = u.c.request(
+            "draw_wall", points=[[u.cx - 900, u.cy + 1700], [u.cx + 900, u.cy + 1700]]
+        )["id"]
+        light = u.c.request("add_light", x=u.cx, y=u.cy + 1500)["id"]
+        batch = u.c.request(
+            "place_objects",
+            objects=[
+                {"asset": asset, "x": u.cx - 300 + i * 300, "y": u.cy + 1400} for i in range(3)
+            ],
+        )
+        made = [wall, light, *batch["ids"]]
+        assert counts() == {
+            "objects": before["objects"] + 3,
+            "walls": before["walls"] + 1,
+            "lights": before["lights"] + 1,
+        }, counts()
+        result = rollback("uat-request")
+        time.sleep(0.3)
+        assert result["rolled_back"] == 3, result
+        assert counts() == before, f"after rollback {counts()} vs before {before}"
+        assert not any(resolves(ident) for ident in made), "an element survived the rollback"
+        return f"wall, light and 3 objects in 3 calls; one rollback reversed {result['kinds']}"
+
+    u.check(
+        "checkpoint: a whole request rolls back in one call",
+        a_request_rolls_back_whole,
+        needs_dirty=True,
+    )
+
+    def another_sessions_edit_blocks_it():
+        asset = u.asset("Objects")
+        other = BridgeClient()
+        assert other.session != u.c.session
+        u.c.request("checkpoint", label="uat-foreign")
+        theirs = other.request("place_object", asset=asset, x=u.cx + 600, y=u.cy - 900)["id"]
+        mine = u.c.request("place_object", asset=asset, x=u.cx + 800, y=u.cy - 900)["id"]
+        before = counts()
+        try:
+            u.c.request("rollback_checkpoint", label="uat-foreign")
+        except BridgeCommandError as exc:
+            assert "another session" in str(exc), exc
+        else:
+            raise AssertionError("rolled back over another session's edit")
+        assert counts() == before, "a refused rollback changed the map"
+        assert resolves(theirs) and resolves(mine)
+        u.c.request("delete_elements", ids=[theirs, mine])
+        return "refused over another session's placement, and nothing changed"
+
+    def placed_then_deleted_rolls_back():
+        """Undoing a delete restores its node on the NEXT frame; a one-frame
+        rollback then failed on that node's placement half way through."""
+        asset = u.asset("Objects")
+        before = counts()
+        u.c.request("checkpoint", label="uat-churn")
+        made = [
+            u.c.request("place_object", asset=asset, x=u.cx - 600 + i * 200, y=u.cy + 900)["id"]
+            for i in range(5)
+        ]
+        for ident in made:
+            u.c.request("delete_element", id=ident)
+        result = rollback("uat-churn")
+        time.sleep(0.3)
+        assert result["rolled_back"] == 10 and "stopped" not in result, result
+        assert counts() == before, f"after rollback {counts()} vs before {before}"
+        assert not any(resolves(ident) for ident in made), "a placement survived"
+        return f"5 placed and deleted, then one rollback reversed all {result['rolled_back']} steps"
+
+    u.check(
+        "checkpoint: placing then deleting the same objects rolls back",
+        placed_then_deleted_rolls_back,
+        needs_dirty=True,
+    )
+
+    u.check(
+        "checkpoint: another session's edit blocks the rollback",
+        another_sessions_edit_blocks_it,
+        needs_dirty=True,
+    )
+
+    def history_limit_is_reported():
+        asset = u.asset("Objects")
+        cap = u.c.request("get_status")["max_undo"]
+        u.c.request("checkpoint", label="uat-evict")
+        made, warnings = [], []
+        for i in range(cap + 1):
+            placed = u.c.request(
+                "place_object", asset=asset, x=u.cx - 1200 + (i % 10) * 200, y=u.cy - 1600
+            )
+            made.append(placed["id"])
+            if placed.get("checkpoint_warning"):
+                warnings.append(placed["checkpoint_warning"])
+        try:
+            assert any("more edit" in w for w in warnings), f"no early warning: {warnings[:2]}"
+            assert any("can no longer" in w for w in warnings), "no warning once lost"
+            try:
+                u.c.request("rollback_checkpoint", label="uat-evict")
+            except BridgeCommandError as exc:
+                assert "no longer reaches" in str(exc), exc
+            else:
+                raise AssertionError("rolled back past the history limit")
+        finally:
+            for start in range(0, len(made), 100):
+                u.c.request("delete_elements", ids=made[start : start + 100])
+        return f"{len(warnings)} warnings over {cap + 1} edits, then the rollback refused"
+
+    u.check(
+        "checkpoint: the history limit is warned about, then refused",
+        history_limit_is_reported,
+        needs_dirty=True,
+    )
+
+    def unreversible_edits_are_named():
+        asset = u.asset("Objects")
+        pool = [u.cx + 1500, u.cy + 1500, 300, 300]
+        u.c.request("checkpoint", label="uat-water")
+        u.c.request("add_water", rect=pool)
+        u.c.request("place_object", asset=asset, x=u.cx + 1200, y=u.cy + 1200)
+        try:
+            result = rollback("uat-water")
+        finally:
+            u.c.request("add_water", rect=pool, invert=True)
+        assert result["rolled_back"] == 1, result
+        assert "add_water" in result["not_reversible"], result
+        return f"rolled back {result['kinds']}; not reversible: {result['not_reversible']}"
+
+    u.check(
+        "checkpoint: edits outside history are named, not claimed",
+        unreversible_edits_are_named,
+        needs_dirty=True,
+    )
+
+
 @group("history")
 def history(u: Uat) -> None:
     def undo_stack_is_capped():
@@ -2167,28 +2664,49 @@ def history(u: Uat) -> None:
     u.check("the undo stack stops at max_undo", undo_stack_is_capped, needs_dirty=True)
 
     def snapshots_are_capped():
-        status = u.c.request("get_status")
-        cap = status["max_snapshot_ops"]
-        assert cap < status["max_undo"], f"snapshot cap {cap} bounds nothing"
-        marker = u.c.request("place_object", asset=u.asset("Objects"), x=u.cx, y=u.cy - 2560)
-        rect = [u.cx - 1024, u.cy - 1024, 512, 512]
-        for i in range(cap + 2):
-            u.c.request("fill_region", rect=rect, slot=1 + i % 2, rate=1.0)
-        held = u.c.request("get_status")["snapshot_ops"]
-        assert held == cap, f"{cap + 2} terrain edits hold {held} snapshots, cap {cap}"
-        kinds = [u.c.request("undo")["kind"] for _ in range(cap)]
-        assert all(kind == "terrain" for kind in kinds), kinds
-        # The two oldest terrain edits were released, so the next undo reaches
-        # the object placed before them rather than a snapshot that is gone.
-        reached = u.c.request("undo")
-        assert reached["kind"] == "create", f"expected the marker create, got {reached}"
-        assert not any(
-            e["id"] == marker["id"]
-            for e in u.c.request("list_elements", kind="objects", limit=1000)["elements"]
-        ), "undoing the create left the marker on the map"
-        return f"{cap + 2} terrain edits -> {held} snapshots; next undo reached the create"
+        """Terrain snapshots are bounded by memory, oldest dropped first.
 
-    u.check("terrain snapshots are capped below the op cap", snapshots_are_capped, needs_dirty=True)
+        At 128x128 tiles a terrain edit holds four 512x512 splat images, ~4 MB,
+        so a few dozen edits pass the budget; at the UAT map's 35x20 it would
+        take hundreds.
+        """
+        start = u.c.request("get_status")
+        w, h = int(start["map_size_woxels"][0] // 256), int(start["map_size_woxels"][1] // 256)
+        budget = start["snapshot_budget_bytes"]
+        u.c.request("set_map_size", width=128, height=128)
+        try:
+            marker = u.c.request("place_object", asset=u.asset("Objects"), x=u.cx, y=u.cy - 2560)
+            rect = [u.cx - 1024, u.cy - 1024, 512, 512]
+            u.c.request("fill_region", rect=rect, slot=1, rate=1.0)
+            per_edit = u.c.request("get_status")["snapshot_bytes"]
+            assert per_edit > 0, "a terrain edit held no snapshot"
+            edits = budget // per_edit + 3
+            for i in range(edits - 1):
+                u.c.request("fill_region", rect=rect, slot=1 + (i + 1) % 2, rate=1.0)
+            status = u.c.request("get_status")
+            held, used = status["snapshot_ops"], status["snapshot_bytes"]
+            assert used <= budget, f"{used} bytes held, budget {budget}"
+            assert held < edits, f"{edits} edits of {per_edit} bytes all kept"
+            kinds = [u.c.request("undo")["kind"] for _ in range(held)]
+            assert all(kind == "terrain" for kind in kinds), kinds
+            # The oldest terrain edits were released, so the next undo reaches
+            # the object placed before them rather than a snapshot that is gone.
+            reached = u.c.request("undo")
+            assert reached["kind"] == "create", f"expected the marker create, got {reached}"
+            assert not any(
+                e["id"] == marker["id"]
+                for e in u.c.request("list_elements", kind="objects", limit=1000)["elements"]
+            ), "undoing the create left the marker on the map"
+        finally:
+            u.c.request("set_map_size", width=w, height=h)
+        return (
+            f"{edits} edits of {per_edit // 1024} KB -> {held} kept in "
+            f"{used // (1024 * 1024)} of {budget // (1024 * 1024)} MB; next undo reached the create"
+        )
+
+    u.check(
+        "terrain snapshots stay within their memory budget", snapshots_are_capped, needs_dirty=True
+    )
 
     def reads_keep_the_redo_branch():
         placed = u.c.request("place_object", asset=u.asset("Objects"), x=u.cx + 512, y=u.cy - 2560)
@@ -2236,7 +2754,7 @@ def history(u: Uat) -> None:
             f"an edit left a stale redo branch: {status['redo_depth']}"
         )
         assert u.c.request("redo")["redone"] is False
-        return f"redo branch for {first['id']} dropped by a new edit (#55)"
+        return f"redo branch for {first['id']} dropped by a new edit"
 
     u.check("a new edit discards the redo branch", an_edit_discards_redo, needs_dirty=True)
 

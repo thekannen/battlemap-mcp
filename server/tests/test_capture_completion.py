@@ -245,3 +245,13 @@ def test_max_px_is_validated_before_a_render_is_started():
             server._require_max_px(bad)
     server._require_max_px(None)
     server._require_max_px(64)
+
+
+def test_starting_the_server_does_not_load_pillow():
+    """Every chat runs its own companion; Pillow loads only for a capture."""
+    import subprocess
+    import sys
+
+    probe = "import sys, battlemap_mcp.server; print('PIL' in sys.modules)"
+    loaded = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    assert loaded.stdout.strip() == "False", loaded.stderr

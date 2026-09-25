@@ -119,6 +119,9 @@ class BridgeClient:
         self._explicit_port = port
         self.timeout = timeout
         self._explicit_token = token
+        # Names this client's edits in the bridge's history, so a checkpoint
+        # rolls back only this session's work and never another client's.
+        self.session = secrets.token_hex(6)
 
     @functools.cached_property
     def port(self) -> int:
@@ -298,7 +301,7 @@ class BridgeClient:
             timing.bridge_request(time.perf_counter() - started, received[0])
 
     def _exchange(self, cmd: str, params: dict[str, Any], received: list[int]) -> dict:
-        payload = {"cmd": cmd, **params}
+        payload = {"cmd": cmd, "session": self.session, **params}
         deadline = time.monotonic() + self.timeout
 
         # Connecting and talking are separated so the two failures stay

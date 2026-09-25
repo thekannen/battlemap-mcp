@@ -37,6 +37,14 @@ forest, a furniture pack for an interior, and say which you chose and why.
 names the pack. `preview_assets` is deliberately exempt, so a pack's contents
 can still be looked at while deciding whether to include it.
 
+**Check the grid the user snaps to.** Call `get_snap_settings`. When the
+Custom Snap Mod is enabled (`auto_snaps: true`), the user works on its grid —
+often hexes — and anything you place by coordinates misses it unless you pass
+`snap='auto'`. Use it for structure and set pieces: walls, furniture and
+lights. Leave winding paths, scatter and deliberately loose detail
+unsnapped, or they turn jagged and regular. On a hex grid, say so and plan
+rooms and routes on that lattice. Never change the user's snap settings.
+
 **Ask before you build, in one round.** A brief that leaves a real design
 decision open does not get better by guessing: the map gets built, shown, and
 built again. Before planning, look for decisions that change WHAT you make
@@ -95,6 +103,13 @@ the [style bible](style-bible.md), set the
 [material language](../battlemap-material-language/SKILL.md) and
 [lighting hierarchy](../battlemap-lighting-hierarchy/SKILL.md), then use
 `list_assets` for each asset family. Place nothing until the plan is coherent.
+
+**Open a rollback point for each request.** Call `checkpoint(label)` when you
+start on something the user asked for, and `rollback_checkpoint(label)` if they
+want all of it undone: one call reverses every edit you made since, and says
+what it could not reverse. It is not a save. A rollback point lives only in
+this session's history; a confirmed `save_map` is the durable
+checkpoint, so when an edit's reply carries `checkpoint_warning`, save.
 
 ## 2. Lay the foundation
 
@@ -223,9 +238,9 @@ Read `exterior_openings` with judgement — it cannot tell a door from a window,
 so a building listed there may still have no way in.
 
 Checkpoint with `save_map` and capture a whole-map `screenshot` before
-continuing. Checkpoints are not ceremony: the bridge's undo stack is capped at
-40 operations and evicts the oldest first, so once a build passes that depth a
-saved file is the only way back to a known state.
+continuing. Checkpoints are not ceremony: the bridge's history holds 1000 steps
+and a memory budget of terrain snapshots, and drops the oldest first, so once a
+build passes that a saved file is the only way back to a known state.
 
 **A checkpoint is a save you confirmed, not a save you asked for.** After
 `save_map`, poll `get_status` until `saving.in_flight` is false, then confirm

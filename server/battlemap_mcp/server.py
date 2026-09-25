@@ -11,6 +11,7 @@ list_assets(category, search=...).
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import hashlib
 import io
@@ -26,11 +27,10 @@ from uuid import uuid4
 
 import pydantic_core
 from mcp.server.mcpserver import Image, MCPServer
-from PIL import Image as PILImage
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic import ValidationError as PydanticValidationError
 
-from . import arrangement, installer, timing, updates
+from . import arrangement, installer, lifecycle, snapping, timing, updates, user_settings
 from .asset_packs import build_manifest, prepare_map_file, unknown_ids
 from .asset_search import DEFAULT_MIN_SCORE, MATCH_MODES, rank_assets
 from .bridge_client import BridgeClient, BridgeUnavailableError, _state_file
@@ -86,7 +86,10 @@ Order: build_room (walls + floor) -> add_portal -> floors and terrain ->
 place_prefab / place_objects -> scatter_objects -> add_light -> look -> save_map.
 
 Batch: place_objects and delete_elements take many in one undo step;
-list_assets takes `searches`.
+list_assets takes `searches`. checkpoint(label) before a multi-step request;
+rollback_checkpoint(label) undoes all of it.
+
+Hex or custom grid? get_snap_settings reports it; snap='auto' places on it.
 
 Floors: place_pattern tiles a room; fill_region / paint_terrain paint blended
 ground; paint_material makes an edged patch; dig_cave carves cave floor.
@@ -105,7 +108,8 @@ save_map(filename=...) after each stage.
 No dedicated tool? list_tool_controls, tool_action, set_tool_option.
 
 If ping or get_status has update_available, tell the user its message and url
-once per session.
+once per session. If they say paused, the user paused you in Dungeondraft:
+tell them, and make no edits until they resume.
 """
 
 mcp = MCPServer("battlemap", instructions=INSTRUCTIONS)
@@ -169,7 +173,12 @@ def tool() -> Callable[[_Tool], _Tool]:
 _CAPTURE_NAME = re.compile(
     r"(?:screenshot-[0-9a-f]{32}\.png|export-[0-9a-f]{32}\.(?:png|jpg|jpeg|webp)|asset_preview\.png)\Z"
 )
-CAPTURE_RETENTION_KEEP = max(0, int(os.environ.get("BATTLEMAP_MCP_CAPTURE_RETENTION", "20")))
+CAPTURE_RETENTION_ENV = "BATTLEMAP_MCP_CAPTURE_RETENTION"
+
+
+def _capture_keep() -> int:
+    """The environment variable if set, else the Dungeondraft panel, else 20."""
+    return user_settings.capture_retention(CAPTURE_RETENTION_ENV)
 
 
 def _capture_root() -> Path:
@@ -221,9 +230,9 @@ def _remove_captures(captures: list[Path]) -> int:
     return removed
 
 
-def _prune_captures(keep: int = CAPTURE_RETENTION_KEEP) -> int:
+def _prune_captures(keep: int | None = None) -> int:
     """Keep the newest configured number of generated captures in mcp_output."""
-    return _remove_captures(_generated_capture_files()[keep:])
+    return _remove_captures(_generated_capture_files()[_capture_keep() if keep is None else keep :])
 
 
 def _capture_path(reported: object, expected_name: str | None = None) -> str:
@@ -248,6 +257,20 @@ def _capture_path(reported: object, expected_name: str | None = None) -> str:
     return str(resolved)
 
 
+def _pil_image():
+    """Pillow's Image module, imported on first use.
+
+    Only captures need it, and every client session runs its own companion.
+    Deferring it saves each idle one about 1.6 MB (macOS, median peak RSS of
+    seven runs: 70.8 -> 69.2 MB). Almost all of the rest is the MCP SDK, which
+    imports cryptography (~4 MB) and its HTTP stack (~18 MB) at module load
+    even for stdio.
+    """
+    from PIL import Image
+
+    return Image
+
+
 def _downscale(data: bytes, max_px: int | None, fmt: str) -> bytes:
     """Shrink a capture's LONG EDGE to `max_px`, or return it untouched.
 
@@ -259,6 +282,7 @@ def _downscale(data: bytes, max_px: int | None, fmt: str) -> bytes:
     """
     if not max_px:
         return data
+    PILImage = _pil_image()
     with PILImage.open(io.BytesIO(data)) as rendered:
         width, height = rendered.size
         if max(width, height) <= max_px:
@@ -287,6 +311,7 @@ def _wait_for_file(path: str, timeout: float = 60.0) -> bytes:
     A writer can pause indefinitely mid-file. Equal sizes alone prove nothing;
     validate the container and decode pixels from the same immutable snapshot.
     """
+    PILImage = _pil_image()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -378,8 +403,21 @@ def get_status() -> dict:
     `saving.in_flight` is true while Dungeondraft is writing the file. Writes
     are refused during that window because edits made mid-save are dropped from
     it — wait and retry rather than treating the refusal as an error.
+
+    `paused` true means the user paused AI edits in Dungeondraft's Battlemap MCP Bridge
+    panel: reads still work, edits are refused. Say so and wait for them.
+    `settings` is what they chose there (update check, capture retention,
+    default snap) and whether an environment variable overrides it.
+
+    `unofficial_patch` says whether Moulk's Unofficial Patch mod is loaded and
+    its version. When it is, layer 1100 and maps up to 200 tiles are
+    available. `dialog_open` true means a popup is holding Dungeondraft's
+    input: if an edit seems ignored, ask the user to close it.
     """
-    return _add_update_notice(bridge.request("get_status"))
+    result = _add_update_notice(bridge.request("get_status"))
+    if isinstance(result, dict):
+        result["settings"] = user_settings.sources(updates.OPT_OUT, CAPTURE_RETENTION_ENV)
+    return result
 
 
 def _add_update_notice(result: Any) -> Any:
@@ -508,6 +546,7 @@ def prepare_map_with_packs(filename: str, packs: list[str] | None = None) -> dic
     report = prepare_map_file(Path(source), destination, manifest)
     answering = _status_before_open()
     bridge.request("open_map", path=str(destination))
+    _forget_scattered()
     # This used to report opened: True the moment the command was sent, so a
     # placement made straight afterwards could reach the map being replaced.
     arrived = _wait_for_map(str(destination), previous=answering)
@@ -602,6 +641,41 @@ def _wait_for_save(
     state: dict = {}
     while time.time() < deadline:
         state = bridge.request("get_status")["saving"]
+        if (
+            expected_path
+            and not state.get("in_flight")
+            and state.get("last_failed") == expected_path
+        ):
+            # Began and never finished, and nothing is saving now: waiting
+            # longer cannot help. Measured with the Unofficial Patch, whose
+            # recovery wrote a backup after the wedge, so the stale marker was
+            # gone and this reported "still saving" until the timeout.
+            if strict:
+                raise ValidationError(
+                    f"Dungeondraft started saving {expected_path} and never finished, "
+                    "so the file was not written and must not be copied"
+                )
+            # The state describes the LAST save, here another file (the patch's
+            # rescue backup): its path and last_saved would read as this map's.
+            # Name the file that was asked for, and the other one for what it is.
+            failed = {
+                k: v for k, v in state.items() if k not in ("path", "last_saved", "is_backup")
+            }
+            other = str(state.get("last_saved") or "")
+            if other and other != expected_path:
+                failed["other_file_saved"] = other
+            return {
+                **failed,
+                "path": expected_path,
+                "completed": False,
+                "reason": "failed",
+                "note": (
+                    "Dungeondraft started writing this file and never finished, so it "
+                    "was NOT written; its log usually shows an exception under World.Save. "
+                    "Nothing is saving now, so call save_map again. If that reports that "
+                    "no save started, Dungeondraft's saving is wedged until a restart."
+                ),
+            }
         if state.get("last_result") == "stale":
             raise ValidationError(
                 f"Dungeondraft started saving {state.get('stale_path') or 'the map'} "
@@ -654,6 +728,14 @@ def _wait_for_save(
 # on 1.2: 129 tiles stopped at 128 and 1 at 8. The bridge refuses the same.
 MAP_TILES_MIN = 8
 MAP_TILES_MAX = 128
+# The Unofficial Patch widens its resize to 1..500 and calls 200 safe. The
+# schema allows that range; the bridge applies the vanilla one without the patch.
+PATCH_MAP_TILES_MIN = 1
+PATCH_MAP_TILES_MAX = 200
+
+# Layer VALUES a placement may use. 1100 is the Unofficial Patch's Above Lights
+# layer; the bridge refuses it when the patch is not loaded.
+OBJECT_LAYERS = [*range(-500, 1000, 100), 1100]
 
 MAX_SEARCHES = 8
 # The most assets one multi-term call returns in total. A term's own `limit`
@@ -1317,6 +1399,189 @@ def list_levels() -> dict:
 # --------------------------------------------------------------------------
 
 
+SNAP_MODES = ["none", "grid", "auto"]
+# A placement that passes no snap follows the user's Dungeondraft panel.
+SNAP_HELP = (
+    "snap: 'none', 'grid' or 'auto'; see get_snap_settings. Pass 'none' "
+    "only when the user asks for exact coordinates."
+)
+
+
+def _mod_grid(state: dict) -> snapping.SnapGrid | None:
+    """The snap mod's grid from a bridge get_snap_settings reply, or None.
+
+    An isometric grid is checked against the mod itself: v1.2.5 snaps it as
+    horizontal hex and v1.1.2 not at all, so the mod's own answer decides.
+    """
+    if not state.get("mod_loaded"):
+        return None
+    grid = snapping.grid_from_settings(state.get("settings") or {})
+    if grid is not None and grid.geometry == "isometric":
+        answers = bridge.request("get_snap_settings", points=snapping.ISOMETRIC_PROBES)
+        if snapping.isometric_matches_hex(grid, answers.get("mod_snapped")):
+            grid = dataclasses.replace(grid, isometric_as_hex=True)
+    return grid
+
+
+def _snap_grid(
+    mode: str, vanilla: snapping.SnapGrid = snapping.VANILLA_HALF
+) -> tuple[snapping.SnapGrid | None, dict]:
+    """The grid `mode` asks for right now, and what to tell the caller about it.
+
+    `vanilla` is what Dungeondraft's own tool for this job snaps to without
+    the mod: see snapping.VANILLA_TILE / VANILLA_HALF.
+    """
+    if mode == "":
+        mode = user_settings.snap_default()
+    require_choice(mode, SNAP_MODES, "snap")
+    if mode == "none":
+        return None, {}
+    state = bridge.request("get_snap_settings")
+    settings = state.get("settings") or {}
+    mod_grid = _mod_grid(state)
+    mod_on = mod_grid is not None and bool(settings.get("custom_snap_enabled"))
+    info: dict = {"mode": mode, "applied": False}
+    if mode == "auto":
+        if not state.get("vanilla_snapping"):
+            info["reason"] = "snapping is off in Dungeondraft (its S key), so nothing was snapped"
+            return None, info
+        if not mod_on or mod_grid is None:
+            info["reason"] = "the Custom Snap Mod is not loaded or not enabled"
+            return None, info
+        grid = mod_grid
+    else:
+        grid = mod_grid if mod_on and mod_grid is not None else vanilla
+    if not grid.supported:
+        info["reason"] = (
+            f"this version of the snap mod does not snap its {grid.geometry} grid "
+            "in a way the bridge knows"
+        )
+        return None, info
+    info.update(applied=True, grid=grid.describe())
+    return grid, info
+
+
+def _snap_xy(grid: snapping.SnapGrid | None, x: float | None, y: float | None):
+    if grid is None or x is None or y is None:
+        return x, y
+    snapped = snapping.snap(grid, x, y)
+    return snapped if snapped is not None else (x, y)
+
+
+def _snap_delta(grid: snapping.SnapGrid | None, dx: float, dy: float) -> tuple[float, float]:
+    if grid is None:
+        return dx, dy
+    snapped = snapping.snap_delta(grid, dx, dy)
+    return snapped if snapped is not None else (dx, dy)
+
+
+def _snap_points(grid: snapping.SnapGrid | None, points: list[list[float]]) -> list[list[float]]:
+    if grid is None:
+        return points
+    return [list(_snap_xy(grid, float(p[0]), float(p[1]))) for p in points]
+
+
+# Ids scatter_objects placed, so moving loose detail does not pick up the
+# panel's snap default: with 'Snap to my grid', a session nudged a scattered
+# rubble piece and it landed on a hex point (Windows, 2026-09-24). Kept for this
+# server process only, and forgotten when a map opens, since ids are per map.
+_SCATTERED: set[int] = set()
+
+
+def _forget_scattered() -> None:
+    _SCATTERED.clear()
+
+
+def _move_snap(
+    snap: str, ids: list[int], vanilla: snapping.SnapGrid
+) -> tuple[snapping.SnapGrid | None, dict]:
+    """_snap_grid for a move: an omitted snap leaves scattered detail loose."""
+    if snap == "" and ids and all(int(i) in _SCATTERED for i in ids):
+        if user_settings.snap_default() == "none":
+            return None, {}
+        return None, {
+            "mode": "none",
+            "applied": False,
+            "reason": "placed by scatter_objects, so it stays loose: the panel's "
+            "snap default does not apply; pass snap to snap it anyway",
+        }
+    return _snap_grid(snap, vanilla)
+
+
+def _with_snap(result: dict, info: dict) -> dict:
+    if info and isinstance(result, dict):
+        result["snap"] = info
+    return result
+
+
+@tool()
+def get_snap_settings() -> dict:
+    """Report the grid the user snaps to. Read-only.
+
+    Dungeondraft's snapping (and the Custom Snap Mod's square or hex grid)
+    moves the MOUSE, so coordinates you pass are placed exactly as given.
+    Placement tools take `snap` to match the user's grid instead:
+
+      'none'  place exactly where asked. Pass it only when the user asks for
+              exact coordinates; otherwise leave snap out, and the user's
+              Placements choice in Dungeondraft's Battlemap MCP Bridge panel applies.
+      'auto'  snap to the Custom Snap Mod's grid when the user has snapping
+              on and the mod enabled - where their own cursor would land.
+              Otherwise nothing moves, and the reply says why.
+      'grid'  snap to the mod's grid if it is enabled, else to the grid
+              Dungeondraft's own tool uses: the tile (256) for walls, rooms,
+              lights, moves and prefabs, the half tile (128) for objects,
+              doors and windows, paths and copies. Ignores the S toggle.
+
+    Returns vanilla_snapping, mod_loaded, mod_enabled, preset, `placements`
+    (the panel's default for an omitted snap, with a note on using it) and `grid`
+    (geometry square/hex_h/hex_v/isometric, interval, offset, radial mode).
+    Isometric snaps as horizontal hex where the mod does (snaps_like), and is
+    otherwise reported and never applied.
+    On a hex map, build on that lattice and say so. Never change the user's
+    snap settings; they are theirs.
+    """
+    state = bridge.request("get_snap_settings")
+    settings = state.get("settings") or {}
+    grid = _mod_grid(state)
+    out = {
+        "vanilla_snapping": state.get("vanilla_snapping"),
+        "mod_loaded": bool(state.get("mod_loaded")),
+        "mod_enabled": bool(settings.get("custom_snap_enabled")) and grid is not None,
+        "preset": state.get("preset"),
+        "grid": grid.describe() if grid is not None else None,
+    }
+    if state.get("unreadable"):
+        out["note"] = (
+            f"this version of the snap mod has no '{state['unreadable']}' setting, "
+            "so its grid could not be read"
+        )
+    auto_grid, auto = _snap_grid("auto")
+    out["auto_snaps"] = auto_grid is not None
+    if not out["auto_snaps"]:
+        out["auto_reason"] = auto.get("reason")
+    placements = {
+        "value": user_settings.snap_default(),
+        "source": "panel" if "snap_default" in user_settings.load() else "default",
+    }
+    out["placements"] = placements
+    if placements["value"] == "auto":
+        out["placements_note"] = (
+            "The user chose 'Snap to my grid' in Dungeondraft's Battlemap MCP Bridge panel: "
+            "leave snap out and placements follow their grid. Pass snap='none' "
+            "only when the user asks for exact coordinates."
+        )
+    elif out["auto_snaps"]:
+        out["placements_note"] = (
+            "Placements land exactly where asked unless you pass snap. Pass "
+            "snap='auto' for walls, furniture and lights to follow the user's "
+            "grid; leave scatter and loose detail unsnapped."
+        )
+    else:
+        out["placements_note"] = "Placements land exactly where asked."
+    return out
+
+
 @tool()
 def place_object(
     asset: str,
@@ -1329,6 +1594,7 @@ def place_object(
     color: str = "",
     modulate: str = "",
     block_light: bool | None = None,
+    snap: str = "",
 ) -> dict:
     """Place an object (prop) on the current map. Returns the new element id.
 
@@ -1339,7 +1605,7 @@ def place_object(
 
     asset: an Objects asset path from list_assets(category='Objects').
     x, y: woxel coordinates; defaults to map center. rotation: degrees.
-    sorting: 0=over, 1=under.
+    sorting: 0=over, 1=under. snap: 'none', 'grid' or 'auto'; see get_snap_settings.
 
     Two different tints, do not confuse them:
 
@@ -1351,7 +1617,8 @@ def place_object(
       Dungeondraft does not preserve this tint when saving and reopening.
 
     layer: which layer the object is drawn on — a VALUE, a multiple of 100 from
-      -500 to 900, not a menu index. 100 is the default and where most objects
+      -500 to 900 (also 1100, Above Lights, when get_status.unofficial_patch is
+      loaded), not a menu index. 100 is the default and where most objects
       belong. Raise it to put something ON a surface: a floor pattern sits on
       100, so a mug placed on 100 can be buried by it, while 200 puts the mug
       above. `sorting` only reorders siblings within one layer and cannot do
@@ -1359,7 +1626,7 @@ def place_object(
     """
     require_positive(scale, "scale")
     require_choice(sorting, [0, 1], "sorting")
-    require_choice(layer, list(range(-500, 1000, 100)), "layer")
+    require_choice(layer, OBJECT_LAYERS, "layer")
     require_finite(x, "x")
     require_finite(y, "y")
     require_finite(rotation, "rotation")
@@ -1370,6 +1637,8 @@ def place_object(
             "modulate is unavailable because Dungeondraft does not preserve it when saving "
             "and reopening. No changes were made."
         )
+    grid, snap_info = _snap_grid(snap)
+    x, y = _snap_xy(grid, x, y)
     params = {
         "asset": asset,
         "scale": scale,
@@ -1387,7 +1656,7 @@ def place_object(
         params["modulate"] = modulate
     if block_light is not None:
         params["block_light"] = block_light
-    return bridge.request("place_object", **params)
+    return _with_snap(bridge.request("place_object", **params), snap_info)
 
 
 BATCH_LIMIT = 100
@@ -1411,7 +1680,9 @@ class PlacedObject(BaseModel):
 
 
 @tool()
-def place_objects(objects: list[PlacedObject] | None = None, file: str = "") -> dict:
+def place_objects(
+    objects: list[PlacedObject] | None = None, file: str = "", snap: str = ""
+) -> dict:
     """Place many objects at chosen positions in ONE call and ONE undo step.
 
     Use it whenever you know where several things go: a row of tables, the
@@ -1437,6 +1708,7 @@ def place_objects(objects: list[PlacedObject] | None = None, file: str = "") -> 
     added afterwards.
 
     One undo() reverses the whole batch while it is the latest operation.
+    snap applies to every entry with an x and y; see get_snap_settings.
 
     A batch placed entirely at scale 1.0 on quarter turns comes back with an
     `arrangement_note`: most placements read better with slight variation.
@@ -1457,6 +1729,10 @@ def place_objects(objects: list[PlacedObject] | None = None, file: str = "") -> 
             "split it, or use scatter_objects for incidental detail"
         )
     items = [_batch_params(entry, f"objects[{index}]") for index, entry in enumerate(entries)]
+    grid, snap_info = _snap_grid(snap)
+    for item in items:
+        if "x" in item and "y" in item:
+            item["x"], item["y"] = _snap_xy(grid, item["x"], item["y"])
     if file:
         result = bridge.request("place_objects", objects=items, compact=True)
     else:
@@ -1464,7 +1740,7 @@ def place_objects(objects: list[PlacedObject] | None = None, file: str = "") -> 
     note = arrangement.batch_note(items)
     if note and isinstance(result, dict):
         result["arrangement_note"] = note
-    return result
+    return _with_snap(result, snap_info)
 
 
 FILE_BATCH_LIMIT = 1000
@@ -1530,7 +1806,7 @@ def _batch_params(entry: object, where: str) -> dict:
         raise ValidationError(f"{where} needs an asset path from list_assets")
     require_positive(item.scale, f"{where}.scale")
     require_choice(item.sorting, [0, 1], f"{where}.sorting")
-    require_choice(item.layer, list(range(-500, 1000, 100)), f"{where}.layer")
+    require_choice(item.layer, OBJECT_LAYERS, f"{where}.layer")
     require_finite(item.x, f"{where}.x")
     require_finite(item.y, f"{where}.y")
     require_finite(item.rotation, f"{where}.rotation")
@@ -1568,19 +1844,22 @@ def draw_wall(
     type: int = 0,
     joint: int = 1,
     color: str = "",
+    snap: str = "",
 ) -> dict:
     """Draw a wall through a list of [x, y] woxel points. Returns the new element id.
 
     asset: optional Walls asset path. loop: close into a loop (e.g. a room).
     type: 0=auto, 1=manual, 2=cave. joint: 0=sharp, 1=bevel, 2=round.
+    snap: 'none', 'grid' or 'auto'; see get_snap_settings.
     """
     require_points(points, minimum=2)
     require_choice(type, [0, 1, 2], "type")
     require_choice(joint, [0, 1, 2], "joint")
     require_hex_color(color, "color")
-    return bridge.request(
+    grid, snap_info = _snap_grid(snap, snapping.VANILLA_TILE)
+    result = bridge.request(
         "draw_wall",
-        points=points,
+        points=_snap_points(grid, points),
         asset=asset,
         loop=loop,
         shadow=shadow,
@@ -1588,6 +1867,7 @@ def draw_wall(
         joint=joint,
         color=color,
     )
+    return _with_snap(result, snap_info)
 
 
 @tool()
@@ -1621,6 +1901,7 @@ def draw_path(
     fade_out: bool = False,
     grow: bool = False,
     shrink: bool = False,
+    snap: str = "",
 ) -> dict:
     """Draw a path/road/river through a list of [x, y] woxel points. Returns the new element id.
 
@@ -1641,11 +1922,14 @@ def draw_path(
 
     Set these per path, here: changing the PathTool's own options beforehand
     does not affect what this draws.
+
+    snap: 'none', 'grid' or 'auto'; see get_snap_settings.
     """
     require_points(points, minimum=2)
     require_choice(sorting, [0, 1], "sorting")
+    grid, snap_info = _snap_grid(snap)
     params = {
-        "points": points,
+        "points": _snap_points(grid, points),
         "asset": asset,
         "layer": layer,
         "sorting": sorting,
@@ -1658,7 +1942,7 @@ def draw_path(
         params["smoothness"] = smoothness
     if width is not None:
         params["width"] = width
-    return bridge.request("draw_path", **params)
+    return _with_snap(bridge.request("draw_path", **params), snap_info)
 
 
 @tool()
@@ -1670,23 +1954,27 @@ def add_light(
     range: float = 1.0,
     shadows: bool = True,
     asset: str = "",
+    snap: str = "",
 ) -> dict:
     """Add a light at a woxel position. Returns the new element id.
 
     color: '#rrggbb' (default warm). energy: brightness. range: radius scale.
     asset: optional Lights gradient/cookie texture path.
+    snap: 'none', 'grid' or 'auto'; see get_snap_settings.
     """
     require_hex_color(color, "color")
     require_finite(x, "x")
     require_finite(y, "y")
     require_finite(energy, "energy")
     require_finite(range, "range")
+    grid, snap_info = _snap_grid(snap, snapping.VANILLA_TILE)
+    x, y = _snap_xy(grid, x, y)
     params = {"color": color, "energy": energy, "range": range, "shadows": shadows, "asset": asset}
     if x is not None:
         params["x"] = x
     if y is not None:
         params["y"] = y
-    return bridge.request("add_light", **params)
+    return _with_snap(bridge.request("add_light", **params), snap_info)
 
 
 @tool()
@@ -1701,6 +1989,7 @@ def add_portal(
     flip: bool = False,
     fallback_free: bool = True,
     rotation: float = 0.0,
+    snap: str = "",
 ) -> dict:
     """Add a door/window portal at a woxel position. Returns the new element id.
 
@@ -1714,8 +2003,12 @@ def add_portal(
     flip: reverse the door's facing. fallback_free: if mount='wall' but no wall
     is within snap_max, place a freestanding portal instead of erroring.
     rotation: degrees, freestanding only.
+    snap: the GRID option ('none', 'grid', 'auto'; see get_snap_settings),
+      applied to x, y before mounting. Not the same as snap_max.
     """
     require_choice(mount, ["wall", "free"], "mount")
+    grid, snap_info = _snap_grid(snap)
+    x, y = _snap_xy(grid, x, y)
     params = {
         "asset": asset,
         "closed": closed,
@@ -1730,7 +2023,7 @@ def add_portal(
         params["x"] = x
     if y is not None:
         params["y"] = y
-    return bridge.request("add_portal", **params)
+    return _with_snap(bridge.request("add_portal", **params), snap_info)
 
 
 @tool()
@@ -1844,6 +2137,7 @@ def build_room(
     floor_slot: int = 1,
     wall_type: int = 0,
     wall_joint: int = 1,
+    snap: str = "",
 ) -> dict:
     """Build a room in one call: a looped wall AND a matching floor on the SAME path.
 
@@ -1861,6 +2155,8 @@ def build_room(
       'pattern' (e.g. 'Simple Tiles', 'Smart Tiles', 'Materials').
     floor_color: optional '#rrggbb' tint (pattern floors).
     wall_type: 0=auto, 1=manual, 2=cave. wall_joint: 0=sharp, 1=bevel, 2=round.
+    snap: 'none', 'grid' or 'auto'; see get_snap_settings. A rect
+      gets all four corners on the grid (on hex, the far one may shift).
 
     Returns { wall_id, floor_id?, points }.
     """
@@ -1889,17 +2185,28 @@ def build_room(
         "wall_type": wall_type,
         "wall_joint": wall_joint,
     }
+    grid, snap_info = _snap_grid(snap, snapping.VANILLA_TILE)
     if rect is not None:
+        if grid is not None:
+            corners = snapping.snap_rect(
+                grid, rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]
+            )
+            if corners is None:
+                raise ValidationError(
+                    f"rect {rect} collapses to nothing on the snap grid; make it larger"
+                )
+            x0, y0, x1, y1 = corners
+            rect = [x0, y0, x1 - x0, y1 - y0]
         params["rect"] = rect
     if points is not None:
-        params["points"] = points
+        params["points"] = _snap_points(grid, points)
     if wall_asset:
         params["wall_asset"] = wall_asset
     if floor_asset:
         params["floor_asset"] = floor_asset
     if floor_color:
         params["floor_color"] = floor_color
-    return bridge.request("build_room", **params)
+    return _with_snap(bridge.request("build_room", **params), snap_info)
 
 
 @tool()
@@ -1936,7 +2243,8 @@ def scatter_objects(
       place_object.
     seed: fixes the arrangement so a run is reproducible. Pass one when you want
       to adjust a single parameter and compare, rather than reshuffling everything.
-    layer: layer VALUE for every placement (multiple of 100, -500..900). Same
+    layer: layer VALUE for every placement (multiple of 100, -500..900, or 1100
+      with the Unofficial Patch). Same
       meaning as in place_object; 100 is the default.
 
     Returns the ids placed, how many attempts it took, and a note if it could not
@@ -1957,7 +2265,7 @@ def scatter_objects(
         raise ValidationError("count must be between 1 and 500")
     require_hex_color(color, "color")
     require_choice(sorting, [0, 1], "sorting")
-    require_choice(layer, list(range(-500, 1000, 100)), "layer")
+    require_choice(layer, OBJECT_LAYERS, "layer")
     params: dict = {
         "assets": assets,
         "rect": rect,
@@ -1974,7 +2282,10 @@ def scatter_objects(
         params["color"] = color
     if seed is not None:
         params["seed"] = seed
-    return bridge.request("scatter_objects", **params)
+    result = bridge.request("scatter_objects", **params)
+    if isinstance(result, dict):
+        _SCATTERED.update(int(i) for i in result.get("ids") or [])
+    return result
 
 
 @tool()
@@ -2700,6 +3011,7 @@ def place_prefab(
     x: float | None = None,
     y: float | None = None,
     rotation: float = 0.0,
+    snap: str = "",
 ) -> dict:
     """Place one of Dungeondraft's pre-composed prefabs by name.
 
@@ -2719,6 +3031,7 @@ def place_prefab(
     set: optionally switch set first.
     x, y: woxel point to centre the prefab on. Pass both or neither.
     rotation: degrees to turn the whole prefab about its centre.
+    snap: snaps the centre x, y; see get_snap_settings.
 
     Placement transforms walls with their mounted portals, paths, roofs,
     patterns, objects, lights, freestanding portals, and text anchors (labels
@@ -2731,6 +3044,8 @@ def place_prefab(
         raise ValidationError("name is required; call list_prefabs first")
     if (x is None) != (y is None):
         raise ValidationError("pass both x and y, or neither")
+    grid, snap_info = _snap_grid(snap, snapping.VANILLA_TILE)
+    x, y = _snap_xy(grid, x, y)
     params: dict = {"name": name}
     if set:
         params["set"] = set
@@ -2739,7 +3054,7 @@ def place_prefab(
         params["y"] = y
     if rotation:
         params["rotation"] = rotation
-    return bridge.request("place_prefab", **params)
+    return _with_snap(bridge.request("place_prefab", **params), snap_info)
 
 
 @tool()
@@ -2954,6 +3269,7 @@ def open_map(path: str, wait: bool = True) -> dict:
         raise ValidationError("path is required")
     before = _status_before_open() if wait else {}
     accepted = bridge.request("open_map", path=path)
+    _forget_scattered()
     if not wait:
         return accepted
     return {**accepted, **_wait_for_map(path, previous=before)}
@@ -3064,9 +3380,15 @@ def clear_caves() -> dict:
 
 
 @tool()
-def move_element(id: int, x: float, y: float) -> dict:
-    """Move any element to a new woxel position by id."""
-    return bridge.request("move_element", id=id, x=x, y=y)
+def move_element(id: int, x: float, y: float, snap: str = "") -> dict:
+    """Move any element to a new woxel position by id.
+
+    snap: 'none', 'grid' or 'auto'; see get_snap_settings. Detail placed by
+    scatter_objects stays loose unless you pass snap.
+    """
+    grid, snap_info = _move_snap(snap, [id], snapping.VANILLA_TILE)
+    x, y = _snap_xy(grid, x, y)
+    return _with_snap(bridge.request("move_element", id=id, x=x, y=y), snap_info)
 
 
 MOVE_ELEMENTS_LIMIT = 1000
@@ -3080,12 +3402,13 @@ def move_elements(
     rotation: float = 0.0,
     pivot_x: float | None = None,
     pivot_y: float | None = None,
+    snap: str = "",
 ) -> dict:
     """Move many elements by the same offset, in one call and ONE undo step.
 
     Use it for anything that moves as a group: a prefab (its `ids` come back
     from place_prefab), a scattered cluster, a furnished corner. Moving them one
-    at a time costs a call and an undo slot each, and the undo history holds 40.
+    at a time costs a call and an undo slot each.
 
     ids: element ids, up to 1000.
     dx, dy: offset in woxels (256 = one tile).
@@ -3097,6 +3420,8 @@ def move_elements(
     Cave-generated walls and mounted portals without their wall are reported
     in `unsupported`, with reasons. Returns `moved`, `missing`, `unsupported`,
     the applied offset/rotation and pivot. Inspect these before repeating a prefab.
+    snap: rounds dx, dy to the nearest whole grid steps; see get_snap_settings.
+      A group of only scatter_objects detail stays loose unless you pass snap.
     """
     if not ids:
         raise ValidationError("ids must not be empty")
@@ -3112,13 +3437,15 @@ def move_elements(
         require_finite(value, field)
     if (pivot_x is None) != (pivot_y is None):
         raise ValidationError("provide both pivot_x and pivot_y")
+    grid, snap_info = _move_snap(snap, list(ids), snapping.VANILLA_TILE)
+    dx, dy = _snap_delta(grid, dx, dy)
     params: dict = {"ids": list(ids), "dx": dx, "dy": dy}
     if rotation:
         params["rotation"] = rotation
     if pivot_x is not None:
         params["pivot_x"] = pivot_x
         params["pivot_y"] = pivot_y
-    return bridge.request("move_elements", **params)
+    return _with_snap(bridge.request("move_elements", **params), snap_info)
 
 
 @tool()
@@ -3146,7 +3473,8 @@ def modify_object(
     color is REFUSED: colour is baked at placement and cannot be changed
     afterwards, here or in Dungeondraft's own UI. Set it in place_object.
 
-    layer: move an existing object to a layer VALUE (multiple of 100, -500..900).
+    layer: move an existing object to a layer VALUE (multiple of 100, -500..900,
+      or 1100 with the Unofficial Patch).
     Unlike colour this IS changeable after placement, and it is how a map built
     before layers were assigned correctly gets repaired.
     """
@@ -3158,7 +3486,7 @@ def modify_object(
             "and reopening. No changes were made."
         )
     if layer is not None:
-        require_choice(layer, list(range(-500, 1000, 100)), "layer")
+        require_choice(layer, OBJECT_LAYERS, "layer")
     params: dict = {"id": id}
     if scale is not None:
         params["scale"] = scale
@@ -3178,9 +3506,14 @@ def modify_object(
 
 
 @tool()
-def duplicate_object(id: int, dx: float = 64.0, dy: float = 0.0) -> dict:
-    """Duplicate an object by id, offset by (dx, dy) woxels. Returns the new element id."""
-    return bridge.request("duplicate_object", id=id, dx=dx, dy=dy)
+def duplicate_object(id: int, dx: float = 64.0, dy: float = 0.0, snap: str = "") -> dict:
+    """Duplicate an object by id, offset by (dx, dy) woxels. Returns the new element id.
+
+    snap: rounds dx, dy to the nearest whole grid steps; see get_snap_settings.
+    """
+    grid, snap_info = _snap_grid(snap)
+    dx, dy = _snap_delta(grid, dx, dy)
+    return _with_snap(bridge.request("duplicate_object", id=id, dx=dx, dy=dy), snap_info)
 
 
 @tool()
@@ -3208,9 +3541,8 @@ def delete_element(id: int) -> dict:
 def delete_elements(ids: list[int]) -> dict:
     """Delete many elements in ONE call and ONE undo step. Reversible with undo().
 
-    Deleting one at a time costs a call and an undo slot each, and the history
-    holds 40 steps — a large group can push everything built before it out of
-    reach.
+    Deleting one at a time costs a call and an undo slot each, and a large group
+    can push everything built before it out of the history's reach.
 
     Before reaching for this on something you just created: a place_prefab,
     scatter_objects, place_objects or build_room call is already a single undo
@@ -3244,14 +3576,15 @@ def add_level(label: str = "Level") -> dict:
 
 @tool()
 def set_map_size(
-    width: Annotated[int, Field(ge=MAP_TILES_MIN, le=MAP_TILES_MAX)],
-    height: Annotated[int, Field(ge=MAP_TILES_MIN, le=MAP_TILES_MAX)],
+    width: Annotated[int, Field(ge=PATCH_MAP_TILES_MIN, le=PATCH_MAP_TILES_MAX)],
+    height: Annotated[int, Field(ge=PATCH_MAP_TILES_MIN, le=PATCH_MAP_TILES_MAX)],
 ) -> dict:
     """Resize the current map, in TILES (a tile is 256 woxels).
 
     Uses Dungeondraft's own Change Map Size resize, so every level's terrain,
     cave and floor-tile rasters are resized and the saved map reopens. Each
-    side must be 8 to 128 tiles. The top-left origin is kept: the map grows or
+    side must be 8 to 128 tiles, or 1 to 200 with the Unofficial Patch loaded
+    (get_status.unofficial_patch). The top-left origin is kept: the map grows or
     shrinks on the right and bottom, nothing placed is moved, and shrinking
     does not delete what ends up outside. Set the size before laying out.
     """
@@ -3566,10 +3899,69 @@ def clear_selection() -> dict:
 
 
 @tool()
+def checkpoint(label: str) -> dict:
+    """Mark the start of a request, so all of it can be undone in one call.
+
+    Call it before a multi-step change (a room, a set piece, a pass of
+    lighting). rollback_checkpoint(label) then undoes every edit THIS session
+    made since, newest first, and reports what it reversed. Reusing a label
+    moves the mark to now.
+    """
+    if not label.strip():
+        raise ValidationError("label must not be empty")
+    return bridge.request("checkpoint", label=label)
+
+
+@tool()
+def rollback_checkpoint(label: str) -> dict:
+    """Undo every edit this session made since checkpoint(label), in one call.
+
+    Refuses and changes nothing when another session (a second chat, another
+    assistant) edited after the mark, or when history, which keeps 1000 steps
+    and 64 MB of terrain snapshots, no longer reaches it. Edits outside history, such
+    as tool_action, water or a map resize, cannot be reversed; the reply lists
+    them under `not_reversible`. Tell the user what was and was not undone.
+    Edit replies carry `checkpoint_warning` as the mark nears the history
+    limit: save_map then.
+    """
+    if not label.strip():
+        raise ValidationError("label must not be empty")
+    # The bridge stops when a step acts on an object that an earlier step of
+    # this rollback is still putting back (that happens on the next frame),
+    # and says `continue`. Each pass re-checks other sessions and history.
+    kinds: list[str] = []
+    for _ in range(ROLLBACK_PASSES):
+        result = bridge.request("rollback_checkpoint", label=label)
+        kinds.extend(result.get("kinds", []))
+        if not result.get("continue"):
+            break
+        time.sleep(0.05)
+    else:
+        result["stopped"] = (
+            f"still unfinished after {ROLLBACK_PASSES} passes; call rollback_checkpoint again"
+        )
+    result["kinds"] = kinds
+    result["rolled_back"] = len(kinds)
+    result.pop("continue", None)
+    return result
+
+
+# Each pass is one Dungeondraft frame; this bounds a rollback that keeps
+# alternating deletes and restores of the same objects.
+ROLLBACK_PASSES = 200
+
+
+@tool()
+def list_checkpoints() -> dict:
+    """Open checkpoints: label, whose, steps since, and whether rollback still reaches them."""
+    return bridge.request("list_checkpoints")
+
+
+@tool()
 def undo() -> dict:
     """Reverse the LATEST undoable edit (create / delete / move / modify / terrain / cave).
 
-    The bridge keeps its own undo/redo stack of 40 steps, independent of
+    The bridge keeps its own undo/redo stack of 1000 steps, independent of
     Dungeondraft's Ctrl+Z. A whole place_prefab, scatter_objects, build_room or
     move_elements call is one step, so one undo reverses all of it — provided
     nothing undoable has happened since. Undo always takes the newest step; it
@@ -3613,7 +4005,8 @@ def get_tool_layer(tool: str) -> dict:
     """Read which layer a tool draws on, and the range of layers that exist.
 
     Layers stack: lower numbers sit under higher ones. Values run from -500 to
-    900 in steps of 100 (`min`, `max` and `step` in the response). 100 is the
+    900 in steps of 100 (`min`, `max` and `step` in the response), plus
+    `extra_layers` such as the Unofficial Patch's 1100 when present. 100 is the
     default for every tool except MaterialBrush, which starts at -400 so floors
     sit under everything.
 
@@ -3636,7 +4029,8 @@ def set_tool_layer(tool: str, layer: int) -> dict:
     what the tool actually holds rather than what you requested.
 
     tool: e.g. "ObjectTool", "PathTool", "PatternShapeTool".
-    layer: layer VALUE, a multiple of 100 from -500 to 900 — not a menu index.
+    layer: layer VALUE, a multiple of 100 from -500 to 900 — not a menu index —
+      or 1100 when the Unofficial Patch is loaded.
     """
     return bridge.request("set_tool_layer", tool=tool, layer=layer)
 
@@ -3754,6 +4148,7 @@ def install_dungeondraft_bridge(mods_dir: str = "", confirm: bool = False) -> di
 
 
 def main() -> None:
+    lifecycle.start()
     updates.start_background_check()
     mcp.run()
 

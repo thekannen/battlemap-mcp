@@ -18,6 +18,9 @@ const TOKEN_FILE := "mcp_bridge_token"
 
 const CONFIG_FILE := "mcp_bridge_config.json"
 
+const SETTINGS_FILE := "mcp_bridge_settings.json"
+const PANEL_ICON := "icons/mcp_bridge.png"
+
 # Maps saved through the bridge land in a named subdirectory of Dungeondraft's
 # own map folder rather than loose in it, so they are easy to find and easy to
 # tell apart from maps the user made by hand.
@@ -106,6 +109,12 @@ var _port := PORT
 # Toggled at runtime by set_verbose — no restart needed.
 var _verbose := false
 
+var _paused := false
+var _panel = null
+var _panel_labels := {}
+var _panel_controls := {}
+var _last_request := ""
+
 var _select_tool_enabled := false
 
 var _signals := {}
@@ -121,6 +130,8 @@ var _last_save_path := ""
 var _saves_seen := 0
 
 var _save_stale_path := ""
+
+var _save_failed_path := ""
 # A save that never reports its end would wedge every mutating command forever,
 # so the in-flight flag expires. Generous: a large map on a slow disk is slow,
 # and expiring early is worse than expiring late.
@@ -142,7 +153,7 @@ const SAFE_DURING_SAVE := [
 	"list_levels", "get_terrain", "get_save_directory",
 	"get_map_style", "get_cave",
 	"list_tool_controls", "list_prefabs", "get_camera", "get_recent_nodes",
-	"get_tool_layer",
+	"get_tool_layer", "get_snap_settings", "checkpoint", "list_checkpoints",
 
 	"screenshot", "export_map",
 	"get_operation",
@@ -193,11 +204,21 @@ var _conns := []
 var _crypto = null
 var _undo_stack := []
 var _redo_stack := []
+
+var _op_serial := 0
+var _lost_serial := 0
+var _current_session := ""
+var _checkpoints := {}
+const MAX_CHECKPOINTS := 20
+const CHECKPOINT_WARN_STEPS := 5
+# Commands that never enter history themselves and are not map edits a
+# checkpoint could miss.
+const CHECKPOINT_CMDS := ["checkpoint", "rollback_checkpoint", "list_checkpoints"]
 var _token := ""
 
-const MAX_UNDO_OPS := 40
+const MAX_UNDO_OPS := 1000
 
-const MAX_SNAPSHOT_OPS := 6
+const SNAPSHOT_BUDGET_BYTES := 64 * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -708,6 +729,7 @@ const MAP_GRID_TEXTURES = ["res://textures/grid/dashes.png", "res://textures/gri
 
 func _record_and_dispatch(req : Dictionary) -> Dictionary:
 	var cmd = req.get("cmd", "")
+	_current_session = str(req.get("session", ""))
 
 	var pre = null
 	if cmd == "set_map_style":
@@ -775,7 +797,27 @@ func _record_and_dispatch(req : Dictionary) -> Dictionary:
 				deleted_many.append({ "id": delete_id, "node": doomed,
 					"parent": doomed.get_parent() })
 
+	# The Unofficial Patch claims walls and texts it has not seen on its next
+	# tick; see _patch_adopt_wall. Walls the bridge adds, directly or through a
+	# deferred re-attach on undo, are the ones missing from this list afterwards.
+	var patch_walls_before = null
+	var patch_groups_touched = 0
+	if not (cmd in SAFE_DURING_SAVE) and _patch_verified():
+		patch_walls_before = _patch_wall_ids()
+		# 1: a group member is the target; 2: undo, redo or a save may have
+		# changed or renamed members, so only if the map has groups at all.
+		if _patch_touches_group(req):
+			patch_groups_touched = 1
+		elif cmd in ["undo", "redo", "save_map"]:
+			patch_groups_touched = 2
+
 	var result = _safe_dispatch(req)
+
+	if patch_walls_before != null:
+		# Now for what was added directly, and next frame for deferred attaches:
+		# the patch polls on a timer that may fire before the deferred call.
+		_patch_after_edit(patch_walls_before)
+		call_deferred("_patch_after_edit", patch_walls_before, patch_groups_touched)
 
 	if typeof(result) == TYPE_DICTIONARY and result.get("ok", false) \
 			and cmd in CREATE_CMDS and typeof(result.get("result")) == TYPE_DICTIONARY \
@@ -792,8 +834,13 @@ func _record_and_dispatch(req : Dictionary) -> Dictionary:
 			terrain_before2, deleted_many)
 		if op != null:
 			_push_undo(op)
+		elif not (cmd in SAFE_DURING_SAVE) and not (cmd in ["undo", "redo"]) \
+				and not (cmd in CHECKPOINT_CMDS):
+			_note_unrecorded(str(cmd))
+		_checkpoint_warning(result)
 
-		if not (cmd in SAFE_DURING_SAVE) and not (cmd in ["undo", "redo"]):
+		if not (cmd in SAFE_DURING_SAVE) and not (cmd in ["undo", "redo"]) \
+				and not (cmd in CHECKPOINT_CMDS):
 			_discard_redo()
 
 	if typeof(result) == TYPE_DICTIONARY and result.get("ok", false) \
@@ -926,17 +973,42 @@ func _release_op(op):
 		node.queue_free()
 
 func _push_undo(op):
+	_op_serial += 1
+	op["serial"] = _op_serial
+	# A redo re-pushes the original op, which keeps the session that made it.
+	if not op.has("session"):
+		op["session"] = _current_session
 	_undo_stack.append(op)
 	while _undo_stack.size() > MAX_UNDO_OPS:
-		_release_op(_undo_stack.pop_front())
+		var evicted = _undo_stack.pop_front()
+		_lost_serial = int(max(_lost_serial, int(evicted.get("serial", 0))))
+		_release_op(evicted)
 	_trim_snapshot_ops()
 
-# Drop the oldest image-holding ops beyond MAX_SNAPSHOT_OPS. Undo still steps
-# back through them in order; it just cannot reach terrain edits older than the
-# last few. That is the trade for not holding gigabytes of splat images.
+# Drop the oldest image-holding ops once their snapshots pass the budget. Undo
+# still steps back through the rest in order; it just cannot reach terrain or
+# cave edits older than that.
 func _holds_snapshot(op) -> bool:
 	return typeof(op) == TYPE_DICTIONARY and (op.get("kind") in ["terrain", "cave"] \
 		or (op.get("kind") == "group" and op.has("terrain_before")))
+
+func _image_bytes(value) -> int:
+	if value is Image:
+		return value.get_width() * value.get_height() * 4
+	if value is BitMap:
+		var size = value.get_size()
+		return int(size.x * size.y / 8) + 1
+	return 0
+
+func _snapshot_bytes(op) -> int:
+	var total := 0
+	for key in ["before", "after", "before2", "after2", "terrain_before", "terrain_before2"]:
+		total += _image_bytes(op.get(key))
+	for key in ["before", "after"]:
+		var cave = op.get(key)
+		if typeof(cave) == TYPE_DICTIONARY:
+			total += _image_bytes(cave.get("floor")) + _image_bytes(cave.get("entrances"))
+	return total
 
 func _snapshot_op_count() -> int:
 	var n := 0
@@ -944,14 +1016,21 @@ func _snapshot_op_count() -> int:
 		if _holds_snapshot(op): n += 1
 	return n
 
+func _snapshot_total_bytes() -> int:
+	var total := 0
+	for op in _undo_stack:
+		if _holds_snapshot(op): total += _snapshot_bytes(op)
+	return total
+
 func _trim_snapshot_ops() -> void:
-	var seen := 0
+	var held := 0
 	var i := _undo_stack.size() - 1
 	while i >= 0:
 		var op = _undo_stack[i]
 		if _holds_snapshot(op):
-			seen += 1
-			if seen > MAX_SNAPSHOT_OPS:
+			held += _snapshot_bytes(op)
+			if held > SNAPSHOT_BUDGET_BYTES:
+				_lost_serial = int(max(_lost_serial, int(op.get("serial", 0))))
 				_release_op(op)
 				_undo_stack.remove(i)
 		i -= 1
@@ -1134,6 +1213,9 @@ func _apply_props(node, snap):
 		node.rotation = snap["rotation"]
 	if snap.get("scale") != null:
 		node.scale = snap["scale"]
+	if snap.get("transform") != null:
+		node.transform = snap["transform"]
+		_patch_write_shear(node)
 	if snap.get("z_index") != null:
 		node.z_index = int(snap["z_index"])
 	if snap.get("rect_position") != null:
@@ -1734,7 +1816,7 @@ func _get_terrain(req : Dictionary) -> Dictionary:
 	if level.Terrain.has_method("get_SmoothBlending"):
 		blending = bool(level.Terrain.get_SmoothBlending())
 
-	return _ok({
+	var out := {
 		"rect": [x0, y0, w, h],
 		"samples": n,
 		"splat_size": [iw, ih],
@@ -1742,7 +1824,7 @@ func _get_terrain(req : Dictionary) -> Dictionary:
 		"weights": rows,
 		"weights2": rows2,
 		"smooth_blending": blending,
-		"note": "the four weights are slots 0-3 read directly from the splat " +
+		"note": ("the four weights are slots 0-3 read directly from the splat " +
 			"image's RGBA channels; slots 1-3 are explicitly paintable and rise " +
 			"when painted, while slot 0 is not itself a paintable channel — it " +
 			"is whatever fraction channels 1-3 leave unclaimed, so a blank map's " +
@@ -1752,8 +1834,15 @@ func _get_terrain(req : Dictionary) -> Dictionary:
 			"to ~1. weights2 holds slots 4-7 from the second splat image in the " +
 			"same shape, empty on a build that does not expose it. " +
 			"smooth_blending is the level's blend mode: true smooth, false " +
-			"textured.",
-	})
+			"textured."),
+	}
+	if _patch_terrain_extended():
+		out["extended_slots"] = true
+		out["extended_note"] = "the Unofficial Patch's 24 terrain slots are on for " + \
+			"this level. Slots 8-23 live in the patch's own images, which these " + \
+			"weights do not include, so they may not sum to 1, and the bridge will " + \
+			"not paint this level"
+	return _ok(out)
 
 func _terrain_slots(level) -> Array:
 	var out := []
@@ -1896,6 +1985,10 @@ func _snapshot(node) -> Dictionary:
 		s["position"] = node.position
 		s["rotation"] = node.rotation
 		s["scale"] = node.scale
+		# Rotation and scale cannot carry a Free Transform skew; see
+		# _patch_is_sheared.
+		if _patch_is_sheared(node):
+			s["transform"] = node.transform
 
 		s["z_index"] = node.z_index
 
@@ -1918,6 +2011,16 @@ func _snapshot(node) -> Dictionary:
 # Dispatch with a guard so a bad command can never take down the TCP loop.
 func _safe_dispatch(req : Dictionary) -> Dictionary:
 	var cmd = req.get("cmd", "")
+	_note_request(str(cmd))
+
+	# The user paused the assistant from the panel. Reads, renders and status
+	# still answer, so an assistant can see why and say so; nothing that
+	# changes the map runs until the user unticks it. Undo/redo are edits too.
+	if _paused and not (cmd in SAFE_DURING_SAVE):
+		return _err("Paused in Dungeondraft: the user has paused AI edits from " +
+			"the Battlemap MCP Bridge panel (Settings tools). Reads, screenshots and " +
+			"exports still work. Tell the user, and wait for them to untick " +
+			"Pause before editing again.")
 
 	if not (cmd in SAFE_DURING_SAVE) and _saving():
 		return _err(("Dungeondraft is saving %s right now%s, and edits made " +
@@ -1939,12 +2042,17 @@ func _safe_dispatch(req : Dictionary) -> Dictionary:
 		if unusable_asset != "":
 			return _err(unusable_asset)
 
+	if cmd in TERRAIN_PAINT_CMDS:
+		var extended = _patch_terrain_refusal()
+		if extended != null:
+			return extended
+
 	match cmd:
 		# --- read / query ---
-		"ping": return _ok({ "pong": true, "protocol": PROTOCOL_VERSION,
+		"ping": return _ok({ "pong": true, "protocol": PROTOCOL_VERSION, "paused": _paused,
 			"engine": Engine.get_version_info(), "bridge_sha256": _bridge_sha256(),
 			"bridge_root": Global.get("Root", ""), "process_id": OS.get_process_id(),
-			"bridge_instance": _instance_id })
+			"bridge_instance": _instance_id, "unofficial_patch": _patch_info() })
 		"get_status": return _get_status()
 		"list_asset_categories": return _list_asset_categories()
 		"list_asset_packs": return _list_asset_packs()
@@ -1984,6 +2092,10 @@ func _safe_dispatch(req : Dictionary) -> Dictionary:
 		"clear_caves": return _clear_caves(req)
 		"get_recent_nodes": return _get_recent_nodes(req)
 		"get_tool_layer": return _get_tool_layer(req)
+		"get_snap_settings": return _get_snap_settings(req)
+		"checkpoint": return _checkpoint(req)
+		"rollback_checkpoint": return _rollback_checkpoint(req)
+		"list_checkpoints": return _list_checkpoints(req)
 		"set_tool_layer": return _set_tool_layer(req)
 		"select_tool": return _select_tool(req)
 		"list_tool_controls": return _list_tool_controls(req)
@@ -2052,7 +2164,8 @@ const ASSET_CATEGORIES := [
 func _get_status() -> Dictionary:
 	var level = Global.World.GetCurrentLevel()
 	if level == null:
-		return _ok({ "map_open": false, "bridge_instance": _instance_id })
+		return _ok({ "map_open": false, "bridge_instance": _instance_id,
+			"paused": _paused })
 	var counts := {}
 	for kind in COLLECTIONS:
 		counts[kind] = _real_children(level, kind).size()
@@ -2060,6 +2173,7 @@ func _get_status() -> Dictionary:
 		counts["portals"] += _wall_mounted_portals(level).size()
 	return _ok({
 		"map_open": true,
+		"paused": _paused,
 
 		"map_file": _current_map_file(),
 
@@ -2073,10 +2187,11 @@ func _get_status() -> Dictionary:
 		"undo_depth": _undo_stack.size(),
 		"redo_depth": _redo_stack.size(),
 		"max_undo": MAX_UNDO_OPS,
-		# Ops holding terrain/cave image snapshots, capped far lower than the op
-		# count because each holds full-resolution splat images.
+		# Ops holding terrain/cave image snapshots, bounded by memory rather
+		# than by count; see SNAPSHOT_BUDGET_BYTES.
 		"snapshot_ops": _snapshot_op_count(),
-		"max_snapshot_ops": MAX_SNAPSHOT_OPS,
+		"snapshot_bytes": _snapshot_total_bytes(),
+		"snapshot_budget_bytes": SNAPSHOT_BUDGET_BYTES,
 		"saving": _save_state(),
 		"export": _operation_view(_export_job) if _export_running() else null,
 
@@ -2087,7 +2202,16 @@ func _get_status() -> Dictionary:
 		# moment the old one still answers with the NEW map_file but the OLD map's
 		# contents; open_map waits for a changed instance rather than a changed path.
 		"bridge_instance": _instance_id,
+		"unofficial_patch": _patch_info(),
+		# A dialog is holding the editor's input: a popup from Dungeondraft or a
+		# mod (the Unofficial Patch shows several on its own). The bridge still
+		# answers, but the user may need to close it.
+		"dialog_open": _dialog_open(),
 	})
+
+func _dialog_open() -> bool:
+	var viewport = Global.Editor.get_viewport() if Global.Editor != null else null
+	return viewport != null and viewport.gui_has_modal_stack()
 
 func _layer_summary(level) -> Dictionary:
 	var out := {}
@@ -2539,9 +2663,21 @@ func _tool_control(tname : String, cname : String):
 		return null
 	return { "tool": tool, "control": controls[cname] }
 
+const USER_OWNED_TOOLS := {
+	"mcp_bridge": "the Battlemap MCP Bridge panel holds the user's own settings, including Pause",
+	"snappy_mod": "the Custom Snap Mod's settings are the user's snap grid",
+}
+
+func _user_owned(tname : String):
+	if USER_OWNED_TOOLS.has(tname):
+		return _err("refused: %s, and only the user changes them in Dungeondraft" % USER_OWNED_TOOLS[tname])
+	return null
+
 func _tool_action(req : Dictionary) -> Dictionary:
 	var tname = str(req.get("tool", ""))
 	var cname = str(req.get("control", ""))
+	var owned = _user_owned(tname)
+	if owned != null: return owned
 	var tc = _tool_control(tname, cname)
 	if tc == null:
 		return _err("no control '" + cname + "' on tool '" + tname + "'; call list_tool_controls")
@@ -2585,6 +2721,8 @@ func _set_tool_option(req : Dictionary) -> Dictionary:
 	if bad_option_color != null: return bad_option_color
 	var tname = str(req.get("tool", ""))
 	var cname = str(req.get("control", ""))
+	var owned = _user_owned(tname)
+	if owned != null: return owned
 	var tc = _tool_control(tname, cname)
 	if tc == null:
 		return _err("no control '" + cname + "' on tool '" + tname + "'; call list_tool_controls")
@@ -3477,7 +3615,11 @@ func _get_element(req : Dictionary) -> Dictionary:
 	var node = _resolve(req)
 	if node == null:
 		return _err("no element with id " + str(req.get("id")))
-	return _ok(_describe(node))
+	var out = _describe(node)
+	var effects = _patch_node_effects(node)
+	if not effects.empty():
+		out["unofficial_patch_effects"] = effects
+	return _ok(out)
 
 func _list_levels() -> Dictionary:
 	var out := []
@@ -3523,6 +3665,8 @@ func _place_object(req : Dictionary) -> Dictionary:
 	if tint_error != null: return tint_error
 	var bad_place_object = _bad_sorting(req)
 	if bad_place_object != null: return bad_place_object
+	var bad_place_layer = _bad_layer(req)
+	if bad_place_layer != null: return bad_place_layer
 	var bad_place_color = _bad_color(req, ["color", "modulate"])
 	if bad_place_color != null: return bad_place_color
 	var level = Global.World.GetCurrentLevel()
@@ -4028,6 +4172,8 @@ func _place_pattern(req : Dictionary) -> Dictionary:
 func _scatter_objects(req : Dictionary) -> Dictionary:
 	var bad_scatter_objects = _bad_sorting(req)
 	if bad_scatter_objects != null: return bad_scatter_objects
+	var bad_scatter_layer = _bad_layer(req)
+	if bad_scatter_layer != null: return bad_scatter_layer
 	var level = Global.World.GetCurrentLevel()
 	if level == null: return _err("no map open")
 
@@ -4291,7 +4437,7 @@ func _splat_unusable(level):
 		return _err("this level's terrain splat image is empty, so terrain " +
 			"cannot be read or painted; writing to it crashes Dungeondraft. " +
 			"A map resized by a bridge older than 1.0.3 saved its splat at " +
-			"the wrong size, and Dungeondraft dropped it on load (#162). The " +
+			"the wrong size, and Dungeondraft dropped it on load. The " +
 			"painted terrain in that file cannot be recovered from here.")
 	return null
 
@@ -4762,6 +4908,8 @@ func _modify_object(req : Dictionary) -> Dictionary:
 	if tint_error != null: return tint_error
 	var bad_modify_color = _bad_color(req, ["modulate"])
 	if bad_modify_color != null: return bad_modify_color
+	var bad_modify_layer = _bad_layer(req)
+	if bad_modify_layer != null: return bad_modify_layer
 	var node = _resolve(req)
 	if node == null: return _err("no element with id " + str(req.get("id")))
 
@@ -4769,10 +4917,18 @@ func _modify_object(req : Dictionary) -> Dictionary:
 		return _err("colour is baked at placement and cannot be changed after: " +
 			"pass color to place_object when creating the object")
 
-	if req.has("scale"):
-		var s = float(req["scale"]); node.scale = Vector2(s, s)
-	if req.has("rotation"):
-		node.rotation = deg2rad(float(req["rotation"]))
+	if (req.has("scale") or req.has("rotation")) and _patch_is_sheared(node):
+		if not _patch_verified():
+			return _err("this object has an Unofficial Patch Free Transform (skew or " +
+				"distort), and this version of the patch is not one the bridge has " +
+				"checked, so it will not rotate or scale it: that would lose the " +
+				"skew. Moving it is fine. No changes were made.")
+		_patch_rotate_scale(node, req.get("rotation"), req.get("scale"))
+	else:
+		if req.has("scale"):
+			var s = float(req["scale"]); node.scale = Vector2(s, s)
+		if req.has("rotation"):
+			node.rotation = deg2rad(float(req["rotation"]))
 	if req.has("shadow"):
 		node.set("HasShadow", bool(req["shadow"]))
 
@@ -4806,6 +4962,8 @@ func _duplicate_object(req : Dictionary) -> Dictionary:
 	prop.position = src.position + Vector2(float(req.get("dx", 64.0)), float(req.get("dy", 0.0)))
 	prop.scale = src.scale
 	prop.rotation = src.rotation
+	if _patch_is_sheared(src):
+		prop.transform = Transform2D(src.transform.x, src.transform.y, prop.position)
 
 	var src_mod = _read_node_modulate(src)
 	if src_mod != null:
@@ -4813,8 +4971,10 @@ func _duplicate_object(req : Dictionary) -> Dictionary:
 	var src_shadow = src.get("HasShadow")
 	if src_shadow != null:
 		prop.set("HasShadow", src_shadow)
+	var copied = ["scale", "rotation", "modulate", "shadow"]
+	copied.append_array(_patch_copy_node_data(src, prop))
 	return _ok({ "id": _id(prop), "position": _vec(prop.position),
-		"copied": ["scale", "rotation", "modulate", "shadow"],
+		"copied": copied,
 		"note": "colour is baked at placement and cannot be copied" })
 
 func _delete_elements(req : Dictionary) -> Dictionary:
@@ -4929,24 +5089,31 @@ func _map_size_window():
 			return null
 	return win
 
-func _map_size_side(win, side : String, value : int) -> void:
+func _map_size_side(win, side : String, value : int, own_handler := true) -> void:
 	var spin = win.find_node(side + "SpinBox", true, false)
-	# set_value alone emits value_changed only when the value differs from what
-	# the box already shows, so call the handler as well; it only records the
-	# number, and repeating it is harmless.
+
 	spin.set_value(float(value))
-	win.call("_on_%sSpinBox_value_changed" % side, float(value))
+	if own_handler:
+		win.call("_on_%sSpinBox_value_changed" % side, float(value))
+
+func _signal_reaches(source, signal_name : String, target, method : String) -> bool:
+	for connection in source.get_signal_connection_list(signal_name):
+		if connection.get("target") == target and str(connection.get("method")) == method:
+			return true
+	return false
 
 func _set_map_size(req : Dictionary) -> Dictionary:
 	if not req.has("width") or not req.has("height"):
 		return _err("'width' and 'height' are required, in tiles")
 	var w = int(req["width"])
 	var h = int(req["height"])
-	# The window clamps each side to 8..128 tiles, measured: 129 stopped at 128
-	# and 1 at 8. Refuse up front rather than resize to a size nobody asked for.
-	if w < MAP_TILES_MIN or h < MAP_TILES_MIN or w > MAP_TILES_MAX or h > MAP_TILES_MAX:
-		return _err("width and height must each be %d to %d tiles; Dungeondraft's resize allows no other size"
-			% [MAP_TILES_MIN, MAP_TILES_MAX])
+
+	var patch = _patch_loaded()
+	var tiles_min = PATCH_MAP_TILES_MIN if patch else MAP_TILES_MIN
+	var tiles_max = PATCH_MAP_TILES_MAX if patch else MAP_TILES_MAX
+	if w < tiles_min or h < tiles_min or w > tiles_max or h > tiles_max:
+		return _err("width and height must each be %d to %d tiles; %s allows no other size"
+			% [tiles_min, tiles_max, "the Unofficial Patch's resize" if patch else "Dungeondraft's resize"])
 	var win = _map_size_window()
 	if win == null:
 		# Never fall back to the property setters: that is the path that wrote
@@ -4964,15 +5131,26 @@ func _set_map_size(req : Dictionary) -> Dictionary:
 	var probe = win.find_node("RightSpinBox", true, false)
 	if probe != null and probe.get("max_value") != null:
 		limit = max(1, int(min(abs(probe.min_value), probe.max_value)))
+
+	var ok_button = win.find_node("OkayButton", true, false)
+	var rewired = ok_button != null and not _signal_reaches(ok_button, "pressed", win, "_on_OkayButton_pressed")
+	if rewired:
+		limit = 1000000
 	while (right != 0 or bottom != 0) and steps < 32:
 		var dr = int(clamp(right, -limit, limit))
 		var db = int(clamp(bottom, -limit, limit))
-		win.call("_on_ChangeMapSizeWindow_about_to_show")
-		_map_size_side(win, "Top", 0)
-		_map_size_side(win, "Left", 0)
-		_map_size_side(win, "Right", dr)
-		_map_size_side(win, "Bottom", db)
-		win.call("_on_OkayButton_pressed")
+		if rewired:
+			win.emit_signal("about_to_show")
+		else:
+			win.call("_on_ChangeMapSizeWindow_about_to_show")
+		_map_size_side(win, "Top", 0, not rewired)
+		_map_size_side(win, "Left", 0, not rewired)
+		_map_size_side(win, "Right", dr, not rewired)
+		_map_size_side(win, "Bottom", db, not rewired)
+		if rewired:
+			ok_button.emit_signal("pressed")
+		else:
+			win.call("_on_OkayButton_pressed")
 		right -= dr
 		bottom -= db
 		steps += 1
@@ -5234,6 +5412,7 @@ func _viewport_size() -> Vector2:
 
 func _apply_zoom(cam, z : float) -> void:
 	z = max(0.01, z)
+	_patch_release_zoom()
 	cam.zoom = Vector2(z, z)
 	# Keep DD's bottom-bar zoom dropdown in sync with the raw zoom value.
 	if Global.Editor.has_method("SetZoomOptionByRaw"):
@@ -5838,6 +6017,12 @@ func _connect_signals() -> void:
 	_connect_one(Global.World, "OnAssignNode", "_on_assign_node")
 
 func _on_save_begin(path, is_backing_up) -> void:
+	# A save that begins while another never ended means the earlier one died.
+	if _save_in_flight and _save_path != "" and _save_path != str(path):
+		_save_failed_path = _save_path
+	# A new attempt at the failed file; if it dies too, it is recorded again.
+	if str(path) == _save_failed_path:
+		_save_failed_path = ""
 	_save_in_flight = true
 	_save_begins += 1
 	_save_stale_path = ""
@@ -5853,6 +6038,8 @@ func _on_save_end() -> void:
 	_saves_seen += 1
 	if _save_path != "":
 		_last_save_path = _save_path
+	if _save_path == _save_failed_path:
+		_save_failed_path = ""
 	if _verbose:
 		print("[mcp-bridge] save end: %s" % _last_save_path)
 
@@ -5869,6 +6056,7 @@ func _saving() -> bool:
 	if OS.get_ticks_msec() - _save_started_ms > SAVE_STALE_MS:
 		_save_in_flight = false
 		_save_stale_path = _save_path
+		_save_failed_path = _save_path
 		print("[mcp-bridge] save of %s never reported an end; clearing the guard" % _save_path)
 		return false
 	return true
@@ -5884,6 +6072,8 @@ func _save_state() -> Dictionary:
 		"saves_seen": _saves_seen,
 		"tracked": _signals.has("OnSaveBegin") and _signals.has("OnSaveEnd"),
 	}
+	if _save_failed_path != "":
+		state["last_failed"] = _save_failed_path
 	if _save_stale_path != "":
 		state["last_result"] = "stale"
 		state["stale_path"] = _save_stale_path
@@ -5958,6 +6148,506 @@ func _assigned_since(mark : int, limit : int = 500) -> Array:
 			break
 	return ids
 
+func _checkpoint_key(session : String, label : String) -> String:
+	return session + "\n" + label
+
+func _checkpoint(req : Dictionary) -> Dictionary:
+	var label = str(req.get("label", "")).strip_edges()
+	if label == "" or label.length() > 64:
+		return _err("'label' is required, up to 64 characters")
+	var key = _checkpoint_key(_current_session, label)
+	if not _checkpoints.has(key) and _checkpoints.size() >= MAX_CHECKPOINTS:
+		return _err("%d checkpoints are open; roll back or reuse a label" % MAX_CHECKPOINTS)
+	_checkpoints[key] = { "label": label, "session": _current_session,
+		"after": _op_serial, "unrecorded": [], "opened": _clock() }
+	return _ok({ "label": label, "history_limit": MAX_UNDO_OPS,
+		"note": "rollback_checkpoint(label) undoes this session's edits from here, " +
+			"in one call, while history still reaches back this far" })
+
+func _steps_since(cp : Dictionary) -> Array:
+	var out := []
+	for op in _undo_stack:
+		if int(op.get("serial", 0)) > int(cp["after"]):
+			out.append(op)
+	return out
+
+func _checkpoint_view(cp : Dictionary) -> Dictionary:
+	var steps = _steps_since(cp)
+	var foreign := 0
+	for op in steps:
+		if str(op.get("session", "")) != str(cp["session"]):
+			foreign += 1
+	return { "label": cp["label"], "mine": str(cp["session"]) == _current_session,
+		"opened": cp["opened"], "steps_since": steps.size(),
+		"other_sessions_steps": foreign,
+		"reachable": _lost_serial <= int(cp["after"]),
+		"not_reversible": cp["unrecorded"] }
+
+func _list_checkpoints(req : Dictionary) -> Dictionary:
+	var out := []
+	for key in _checkpoints:
+		out.append(_checkpoint_view(_checkpoints[key]))
+	return _ok({ "checkpoints": out })
+
+func _rollback_checkpoint(req : Dictionary) -> Dictionary:
+	var label = str(req.get("label", "")).strip_edges()
+	var key = _checkpoint_key(_current_session, label)
+	if not _checkpoints.has(key):
+		var mine := []
+		for other in _checkpoints.values():
+			if str(other["session"]) == _current_session:
+				mine.append(other["label"])
+		return _err("no checkpoint '%s' in this session; open ones: %s" % [label, str(mine)])
+	var cp = _checkpoints[key]
+	if _lost_serial > int(cp["after"]):
+		return _err(("history no longer reaches checkpoint '%s': a step made after it " +
+			"was dropped (history keeps %d steps, and %d MB of terrain and cave " +
+			"snapshots). Nothing was changed. Undo step by step what remains, or " +
+			"restore the last saved map.")
+			% [label, MAX_UNDO_OPS, SNAPSHOT_BUDGET_BYTES / (1024 * 1024)])
+	var steps = _steps_since(cp)
+	var foreign := {}
+	for op in steps:
+		if str(op.get("session", "")) != str(cp["session"]):
+			var who = str(op.get("session", ""))
+			foreign[who] = int(foreign.get(who, 0)) + 1
+	if not foreign.empty():
+		var count := 0
+		for who in foreign: count += int(foreign[who])
+		return _err(("another session made %d of the %d edits since checkpoint '%s' " +
+			"(another assistant, or a second chat). Rolling back would undo their " +
+			"work, so nothing was changed.") % [count, steps.size(), label])
+	var undone := []
+	var stopped = ""
+	var more := false
+
+	var restored := {}
+	while not _undo_stack.empty() and int(_undo_stack.back().get("serial", 0)) > int(cp["after"]):
+		var top = _undo_stack.back()
+		var pending := false
+		for node in _op_nodes(top):
+			if restored.has(node):
+				pending = true
+		if pending:
+			more = true
+			break
+		var result = _do_undo()
+		if not result.get("ok", false):
+			stopped = str(result.get("error", ""))
+			break
+		if not result["result"].get("undone", false):
+			break
+		undone.append(result["result"]["kind"])
+		if str(top.get("kind", "")) in ["delete", "delete_many"]:
+			for node in _op_nodes(top):
+				restored[node] = true
+	var out = { "label": label, "rolled_back": undone.size(), "kinds": undone,
+		"continue": more, "not_reversible": cp["unrecorded"],
+		"undo_depth": _undo_stack.size(), "redo_depth": _redo_stack.size() }
+	if stopped != "":
+		out["stopped"] = ("stopped after %d of %d steps: %s. The rest are still on " +
+			"the map; undo them step by step.") % [undone.size(), steps.size(), stopped]
+	if not more and not cp["unrecorded"].empty():
+		out["note"] = ("these changes since the checkpoint are not in history and " +
+			"were not reversed: %s") % str(cp["unrecorded"])
+	if not more:
+		cp["unrecorded"] = []
+	return _ok(out)
+
+# The nodes an op attaches or detaches, for rollback's same-frame check.
+func _op_nodes(op) -> Array:
+	var kind = str(op.get("kind", ""))
+	if kind in ["create", "delete"] and op.has("node"):
+		return [op["node"]]
+	if kind in ["group", "delete_many"]:
+		var nodes := []
+		for entry in op.get("entries", []):
+			nodes.append(entry.get("node"))
+		return nodes
+	return []
+
+func _note_unrecorded(cmd : String) -> void:
+	for cp in _checkpoints.values():
+		if str(cp["session"]) == _current_session and not (cmd in cp["unrecorded"]):
+			cp["unrecorded"].append(cmd)
+
+# Warn in an edit's reply while an open checkpoint of this session is about to
+# lose its oldest step: history drops the oldest step past MAX_UNDO_OPS.
+func _checkpoint_warning(result) -> void:
+	if typeof(result) != TYPE_DICTIONARY or typeof(result.get("result")) != TYPE_DICTIONARY:
+		return
+	for cp in _checkpoints.values():
+		if str(cp["session"]) != _current_session:
+			continue
+		if _lost_serial > int(cp["after"]):
+			result["result"]["checkpoint_warning"] = ("checkpoint '%s' can no longer be " +
+				"rolled back: history has dropped a step made after it") % cp["label"]
+			return
+		var first := -1
+		for i in range(_undo_stack.size()):
+			if int(_undo_stack[i].get("serial", 0)) > int(cp["after"]):
+				first = i
+				break
+		if first < 0:
+			continue
+		var left = MAX_UNDO_OPS - _undo_stack.size() + first
+		if left <= CHECKPOINT_WARN_STEPS:
+			result["result"]["checkpoint_warning"] = ("checkpoint '%s' loses its oldest " +
+				"step after %d more edit(s); save_map now, or a rollback will not reach " +
+				"it") % [cp["label"], left]
+			return
+
+const SNAP_MOD_TOOL := "snappy_mod"
+const SNAP_MOD_FIELDS := ["custom_snap_enabled", "active_geometry", "snap_interval",
+	"snap_offset", "radial_mode_to_corner"]
+
+func _snap_mod_instance():
+	if Global.Editor == null or not Global.Editor.Tools.has(SNAP_MOD_TOOL):
+		return null
+	var wrapper = Global.Editor.Tools[SNAP_MOD_TOOL]
+	if wrapper == null or not wrapper.has_method("get_ScriptInstance"):
+		return null
+	var instance = wrapper.get_ScriptInstance()
+	if instance == null or typeof(instance) != TYPE_OBJECT:
+		return null
+	return instance
+
+func _snap_value(value):
+	if typeof(value) == TYPE_VECTOR2:
+		return [value.x, value.y]
+	return value
+
+func _get_snap_settings(req : Dictionary) -> Dictionary:
+	var out := { "vanilla_snapping": null, "mod_loaded": false }
+	if Global.Editor != null and Global.Editor.has_method("get_IsSnapping"):
+		out["vanilla_snapping"] = bool(Global.Editor.get_IsSnapping())
+	var mod = _snap_mod_instance()
+	if mod == null:
+		return _ok(out)
+	out["mod_loaded"] = true
+	var settings := {}
+	for field in SNAP_MOD_FIELDS:
+		var value = mod.get(field)
+		if value == null:
+			# A different version of the mod: report what could not be read
+			# rather than a grid built from half of it.
+			out["unreadable"] = field
+			return _ok(out)
+		settings[field] = _snap_value(value)
+	out["settings"] = settings
+	var presets = mod.get("preset_options")
+	var chosen = mod.get("preset_menu_setting")
+	if typeof(presets) == TYPE_ARRAY and typeof(chosen) == TYPE_INT \
+			and chosen >= 0 and chosen < presets.size() \
+			and typeof(presets[chosen]) == TYPE_DICTIONARY:
+		out["preset"] = str(presets[chosen].get("preset_name", ""))
+
+	var points = req.get("points", [])
+	if typeof(points) == TYPE_ARRAY and not points.empty():
+		if points.size() > 200:
+			return _err("'points' is capped at 200")
+		if not mod.has_method("get_snapped_position"):
+			out["mod_snapped"] = null
+			return _ok(out)
+		var snapped := []
+		for point in _points(points):
+			snapped.append(_snap_value(mod.get_snapped_position(point)))
+		out["mod_snapped"] = snapped
+	return _ok(out)
+
+const PATCH_ID := "Moulk.BugFixes"
+const PATCH_VERIFIED := ["1.7"]
+const PATCH_ABOVE_LIGHTS_LAYER := 1100
+const PATCH_MAP_TILES_MIN := 1
+# The patch's resize allows 500 but warns above 200 ("can cause unexpected
+# behavior"); the bridge stays inside the range it calls safe.
+const PATCH_MAP_TILES_MAX := 200
+# Commands that write Dungeondraft's two terrain splats.
+const TERRAIN_PAINT_CMDS := ["paint_terrain", "fill_terrain", "fill_region", "repair_terrain"]
+
+func _patch_info() -> Dictionary:
+	var version = null
+	if Engine.has_meta("_moulk_upd_registry"):
+		var registry = Engine.get_meta("_moulk_upd_registry")
+		if typeof(registry) == TYPE_DICTIONARY and registry.has(PATCH_ID) \
+				and typeof(registry[PATCH_ID]) == TYPE_DICTIONARY:
+			version = str(registry[PATCH_ID].get("local", ""))
+
+	if version == null and Engine.has_meta("terrain_slots_extended_singleton"):
+		version = ""
+	if version == null:
+		return { "loaded": false }
+	var parts = version.split(".")
+	var minor = "%s.%s" % [parts[0], parts[1]] if parts.size() >= 2 else ""
+	return { "loaded": true, "version": version, "verified": minor in PATCH_VERIFIED }
+
+func _patch_loaded() -> bool:
+	return _patch_info().loaded
+
+func _patch_verified() -> bool:
+	var info = _patch_info()
+	return info.loaded and info.verified
+
+# The object behind one of the patch's Engine metadata entries: either the
+# object itself or a listener node whose `handler` is the patch script.
+func _patch_handler(meta : String):
+	if not _patch_verified() or not Engine.has_meta(meta):
+		return null
+	var node = Engine.get_meta(meta)
+	if node == null or typeof(node) != TYPE_OBJECT or not is_instance_valid(node):
+		return null
+	var handler = node.get("handler")
+	if handler == null:
+		return node
+	if typeof(handler) != TYPE_OBJECT or not is_instance_valid(handler):
+		return null
+	return handler
+
+func _layer_allowed(layer : int) -> bool:
+	if layer >= LAYER_MIN and layer <= LAYER_MAX and layer % LAYER_STEP == 0:
+		return true
+	return layer == PATCH_ABOVE_LIGHTS_LAYER and _patch_loaded()
+
+func _bad_layer(req : Dictionary):
+	if not req.has("layer"):
+		return null
+	var value = req["layer"]
+	if not (typeof(value) in [TYPE_INT, TYPE_REAL]) or not _layer_allowed(int(value)):
+		return _err("'layer' must be %s; got %s" % [_layer_rule(), str(value)])
+	return null
+
+func _layer_rule() -> String:
+	var rule = "a multiple of %d from %d to %d" % [LAYER_STEP, LAYER_MIN, LAYER_MAX]
+	if _patch_loaded():
+		rule += ", or %d (the Unofficial Patch's Above Lights layer)" % PATCH_ABOVE_LIGHTS_LAYER
+	return rule
+
+func _patch_release_zoom() -> void:
+	var zoom = _patch_handler("up_zoomunlock_listener")
+	if zoom == null or zoom.get("_extended") != true:
+		return
+	var options = Global.Editor.get("ZoomOptions")
+	if options == null or not is_instance_valid(options) or not options.has_signal("item_selected"):
+		return
+	options.emit_signal("item_selected", int(options.selected))
+
+func _patch_adopt_text() -> void:
+	var fix = _patch_handler("_TextToolFixListener")
+	if fix == null or fix.get("_prev_text_count") == null:
+		return
+	var level = Global.World.GetCurrentLevel()
+	if level == null or level.Texts == null:
+		return
+	fix.set("_prev_text_count", level.Texts.get_child_count())
+
+func _patch_wall_ids() -> Dictionary:
+	var ids := {}
+	var level = Global.World.GetCurrentLevel()
+	if level == null or level.Walls == null:
+		return ids
+	ids["level"] = level.get_instance_id()
+	for wall in level.Walls.get_children():
+		ids[wall.get_instance_id()] = true
+	return ids
+
+# Runs the frame after a bridge edit, once deferred attaches have landed.
+func _patch_after_edit(walls_before : Dictionary, groups_touched := 0) -> void:
+	_patch_adopt_text()
+	if groups_touched == 1 or (groups_touched == 2 and _patch_map_has_groups()):
+		_patch_save_groups()
+	var level = Global.World.GetCurrentLevel()
+	if level == null or level.Walls == null:
+		return
+	# After a level switch every wall would look new, the user's included.
+	if walls_before.get("level") != level.get_instance_id():
+		return
+	for wall in level.Walls.get_children():
+		if not walls_before.has(wall.get_instance_id()):
+			_patch_adopt_wall(wall)
+
+const PATCH_GROUP_MIN_ID := 10000
+
+func _patch_group_handler():
+	if not _patch_verified() or Global.World == null:
+		return null
+	var listener = Global.World.get_node_or_null("GroupAssetsListener")
+	if listener == null or not is_instance_valid(listener):
+		return null
+	var handler = listener.get("handler")
+	if handler == null or not is_instance_valid(handler) or not handler.has_method("_save_groups"):
+		return null
+	return handler
+
+func _patch_touches_group(req : Dictionary) -> bool:
+	var ids := []
+	if req.has("id"):
+		ids.append(req["id"])
+	if typeof(req.get("ids")) == TYPE_ARRAY:
+		ids.append_array(req["ids"])
+	for raw in ids:
+		if not (typeof(raw) in [TYPE_INT, TYPE_REAL]):
+			continue
+		var node = Global.World.GetNodeByID(int(raw))
+		if node != null and node.has_meta("prefab_id") \
+				and int(node.get_meta("prefab_id")) >= PATCH_GROUP_MIN_ID:
+			return true
+	return false
+
+func _patch_map_has_groups() -> bool:
+	var handler = _patch_group_handler()
+	if handler == null or not handler.has_method("_get_all_groupable_nodes"):
+		return false
+	for node in handler._get_all_groupable_nodes():
+		if node != null and is_instance_valid(node) and node.has_meta("prefab_id") \
+				and int(node.get_meta("prefab_id")) >= PATCH_GROUP_MIN_ID:
+			return true
+	return false
+
+func _patch_save_groups() -> void:
+	var handler = _patch_group_handler()
+	if handler != null:
+		handler._save_groups()
+
+func _patch_adopt_wall(wall) -> void:
+	if wall == null or not is_instance_valid(wall) or not Engine.has_meta("wal_timer"):
+		return
+	if not _patch_verified():
+		return
+	var timer = Engine.get_meta("wal_timer")
+	if timer == null or typeof(timer) != TYPE_OBJECT or not is_instance_valid(timer):
+		return
+	for connection in timer.get_signal_connection_list("timeout"):
+		var target = connection.get("target")
+		if target != null and is_instance_valid(target) \
+				and typeof(target.get("_known_wall_ids")) == TYPE_DICTIONARY:
+			target._known_wall_ids[wall.get_instance_id()] = true
+
+func _patch_terrain_extended() -> bool:
+	var tse = _patch_handler("terrain_slots_extended_singleton")
+	if tse == null or not tse.has_method("is_extended_active"):
+		return false
+	return tse.is_extended_active() == true
+
+const PATCH_NODE_EFFECTS := {
+	"_ft_transforms": "skew", "_ft_distort": "distort", "_ft_crop": "crop",
+	"_ft_edgecrop": "edge_crop", "_ft_blur": "blur", "_ft_pattern_orig": "pattern_transform",
+	"object_keep_lit": "keep_lit",
+}
+# What the patch's own paste copies to a pasted node; the position-bound
+# pattern stores are rebuilt by the patch instead.
+const PATCH_COPIED_STORES := ["_ft_transforms", "_ft_distort", "_ft_pattern_orig",
+	"_ft_pattern_reset", "_ft_crop", "_ft_crop_soft", "_ft_crop_feather",
+	"_ft_crop_opacity", "_ft_edgecrop", "_ft_blur", "object_keep_lit"]
+
+func _patch_node_key(node) -> String:
+	if node == null or not is_instance_valid(node) or not node.has_meta("node_id"):
+		return ""
+	return "node-id-%s" % str(node.get_meta("node_id"))
+
+func _patch_store(store : String):
+	var data = Global.get("ModMapData")
+	if typeof(data) != TYPE_DICTIONARY or not data.has(store) \
+			or typeof(data[store]) != TYPE_DICTIONARY:
+		return null
+	return data[store]
+
+func _patch_node_effects(node) -> Array:
+	var effects := []
+	if not _patch_loaded():
+		return effects
+	var key = _patch_node_key(node)
+	if key == "":
+		return effects
+	for store in PATCH_NODE_EFFECTS:
+		var entries = _patch_store(store)
+		if entries != null and entries.has(key):
+			effects.append(PATCH_NODE_EFFECTS[store])
+	var styles = _patch_store("TextStyleExtra")
+	if styles != null and styles.has(str(node.get_meta("node_id"))):
+		effects.append("text_style")
+	return effects
+
+func _patch_is_sheared(node) -> bool:
+	var key = _patch_node_key(node)
+	if key == "" or not _patch_loaded():
+		return false
+	for store in ["_ft_transforms", "_ft_distort"]:
+		var entries = _patch_store(store)
+		if entries != null and entries.has(key):
+			return true
+	return false
+
+# Rotate and scale the whole transform, keeping the skew, and write the result
+# where the patch keeps it (its own fold does the same when the user rotates).
+func _patch_rotate_scale(node, rotation_deg, scale) -> void:
+	var t : Transform2D = node.transform
+	var basis = Transform2D(t.x, t.y, Vector2.ZERO)
+	if rotation_deg != null:
+		basis = Transform2D(deg2rad(float(rotation_deg)) - t.get_rotation(), Vector2.ZERO) * basis
+	if scale != null and basis.x.length() > 0.0:
+		var k = float(scale) / basis.x.length()
+		basis = Transform2D(basis.x * k, basis.y * k, Vector2.ZERO)
+	node.transform = Transform2D(basis.x, basis.y, t.origin)
+	_patch_write_shear(node)
+
+func _patch_write_shear(node) -> void:
+	var entries = _patch_store("_ft_transforms")
+	var key = _patch_node_key(node)
+	if entries == null or key == "" or not entries.has(key):
+		return
+	var t : Transform2D = node.transform
+	entries[key] = { "xx": t.x.x, "xy": t.x.y, "yx": t.y.x, "yy": t.y.y,
+		"ox": t.origin.x, "oy": t.origin.y }
+	_patch_persist_effects()
+
+func _patch_persist_effects() -> void:
+	if not _patch_verified():
+		return
+	var data = Global.get("ModMapData")
+	if typeof(data) != TYPE_DICTIONARY or not data.has("_free_transform"):
+		return
+	var ft = data["_free_transform"]
+	if ft != null and typeof(ft) == TYPE_OBJECT and is_instance_valid(ft) \
+			and ft.has_method("_save_ft_data"):
+		ft._save_ft_data()
+
+# The patch's own paste copies these entries to the pasted node; a bridge
+# duplicate does the same, or the copy loses them when the map reopens.
+func _patch_copy_node_data(src, dst) -> Array:
+	var copied := []
+	# A fresh node has no node_id until one is assigned.
+	if dst != null and is_instance_valid(dst):
+		_id(dst)
+	var from = _patch_node_key(src)
+	var to = _patch_node_key(dst)
+	if from == "" or to == "" or not _patch_verified():
+		return copied
+	var delta = dst.position - src.position
+	for store in PATCH_COPIED_STORES:
+		var entries = _patch_store(store)
+		if entries == null or not entries.has(from):
+			continue
+		var value = entries[from]
+		if typeof(value) == TYPE_DICTIONARY or typeof(value) == TYPE_ARRAY:
+			value = value.duplicate(true)
+		if store == "_ft_transforms" and typeof(value) == TYPE_DICTIONARY:
+			value["ox"] = float(value.get("ox", 0.0)) + delta.x
+			value["oy"] = float(value.get("oy", 0.0)) + delta.y
+		entries[to] = value
+		if PATCH_NODE_EFFECTS.has(store):
+			copied.append(PATCH_NODE_EFFECTS[store])
+	if not copied.empty():
+		_patch_persist_effects()
+	return copied
+
+func _patch_terrain_refusal():
+	if not _patch_terrain_extended():
+		return null
+	return _err("this level has the Unofficial Patch's 24 terrain slots turned on, " +
+		"and the bridge paints only Dungeondraft's own 8. Painting here would leave " +
+		"the patch's extra slots showing through, so nothing was changed. Paint this " +
+		"level in Dungeondraft, or turn the extra slots off for it")
+
 func _layer_tool(name : String):
 	if name == "":
 		return null
@@ -5974,8 +6664,11 @@ func _get_tool_layer(req : Dictionary) -> Dictionary:
 	if target == null:
 		return _err("no tool '%s' with a layer on this build; layers exist on: %s"
 			% [name, str(_layers_supported())])
-	return _ok({ "tool": name, "layer": int(target.get_ActiveLayer()),
-		"min": LAYER_MIN, "max": LAYER_MAX, "step": LAYER_STEP })
+	var out := { "tool": name, "layer": int(target.get_ActiveLayer()),
+		"min": LAYER_MIN, "max": LAYER_MAX, "step": LAYER_STEP }
+	if _patch_loaded():
+		out["extra_layers"] = [PATCH_ABOVE_LIGHTS_LAYER]
+	return _ok(out)
 
 func _set_tool_layer(req : Dictionary) -> Dictionary:
 	var name = str(req.get("tool", ""))
@@ -5986,9 +6679,8 @@ func _set_tool_layer(req : Dictionary) -> Dictionary:
 	if not req.has("layer"):
 		return _err("'layer' is required (an integer); call get_tool_layer to read the current one")
 	var want = int(req["layer"])
-	if want < LAYER_MIN or want > LAYER_MAX or want % LAYER_STEP != 0:
-		return _err("'layer' must be a multiple of %d between %d and %d; got %d"
-			% [LAYER_STEP, LAYER_MIN, LAYER_MAX, want])
+	if not _layer_allowed(want):
+		return _err("'layer' must be %s; got %d" % [_layer_rule(), want])
 	if not target.has_method("SetLayer"):
 		return _err("tool '%s' exposes no SetLayer" % name)
 
@@ -6014,6 +6706,9 @@ func _set_tool_layer(req : Dictionary) -> Dictionary:
 	return _ok(out)
 
 func _layer_index(layer : int) -> int:
+	# The patch appends its Above Lights layer after 900, as the menu's 16th.
+	if layer == PATCH_ABOVE_LIGHTS_LAYER:
+		return int((LAYER_MAX - LAYER_MIN) / LAYER_STEP) + 1
 	return int((layer - LAYER_MIN) / LAYER_STEP)
 
 func _layers_supported() -> Array:
@@ -6090,22 +6785,206 @@ func _ok(result) -> Dictionary:
 func _err(msg) -> Dictionary:
 	return { "ok": false, "error": msg }
 
+const SNAP_DEFAULT_LABELS := ["Place exactly where asked", "Snap to my grid"]
+const SNAP_DEFAULT_VALUES := ["none", "auto"]
+
 func _register_tool():
-	var icon = _ensure_icon()
+	# CreateButton loads its icon argument: "" logged "Error opening file ''"
+	# once per button (Windows, 2026-09-24), so buttons reuse the panel icon,
+	# as the Custom Snap Mod gives every button a real one.
+	var icon = _panel_icon()
 	var panel = Global.Editor.Toolset.CreateModTool(self, "Settings", "mcp_bridge", "Battlemap MCP Bridge", icon)
-	panel.CreateLabel("Listening on")
-	panel.CreateLabel("%s:%d" % [HOST, _port])
+	if panel == null:
+		return
+	_panel = panel
+	_panel_labels = {}
+	_panel_controls = {}
+	var settings = _read_settings()
 
-func _ensure_icon() -> String:
+	_panel_label(panel, "listening", "Listening on %s:%d" % [HOST, _port])
+	_panel_label(panel, "bridge", "Bridge protocol %d, build %s" % [PROTOCOL_VERSION, _bridge_sha256().left(12)])
+	_panel_label(panel, "last", "No requests yet")
+	_panel_label(panel, "history", "")
+	panel.CreateSeparator()
 
+	var pause = panel.CreateCheckButton("Pause AI edits", "mcp_pause", _paused)
+	if pause != null:
+		pause.connect("toggled", self, "_on_panel_pause")
+		_panel_controls["pause"] = pause
+	var undo = panel.CreateButton("Undo the assistant's last step", icon)
+	if undo != null:
+		undo.connect("pressed", self, "_on_panel_undo")
+	panel.CreateSeparator()
+
+	var updates = panel.CreateCheckButton("Check for updates", "mcp_update_check",
+		bool(settings.get("update_check", true)))
+	if updates != null:
+		updates.connect("toggled", self, "_on_panel_update_check")
+	var chosen = SNAP_DEFAULT_VALUES.find(str(settings.get("snap_default", "none")))
+	var snap = panel.CreateLabeledDropdownMenu("mcp_snap_default", "Placements",
+		SNAP_DEFAULT_LABELS, SNAP_DEFAULT_LABELS[max(chosen, 0)])
+	if snap != null:
+		snap.connect("item_selected", self, "_on_panel_snap_default")
+	var keep = int(settings.get("capture_retention", 20))
+	_panel_label(panel, "captures", _captures_text(keep))
+	var slider = panel.CreateSlider("mcp_capture_retention", float(keep), 0.0, 100.0, 1.0, false)
+	if slider != null:
+		slider.connect("value_changed", self, "_on_panel_captures")
+	panel.CreateSeparator()
+
+	var verbose = panel.CreateCheckButton("Verbose log", "mcp_verbose", _verbose)
+	if verbose != null:
+		verbose.connect("toggled", self, "_on_panel_verbose")
+		_panel_controls["verbose"] = verbose
+	var folder = panel.CreateButton("Open output folder", icon)
+	if folder != null:
+		folder.connect("pressed", self, "_on_panel_open_output")
+	_panel_label(panel, "output", "")
+	panel.CreateNote("These settings belong to you. Your assistant can read " +
+		"them but cannot change them.")
+	_refresh_panel()
+
+func _panel_icon() -> String:
+	var shipped = str(Global.get("Root", "")) + PANEL_ICON
+	if File.new().file_exists(shipped):
+		return shipped
 	var path = "user://mcp_bridge.png"
-	var f = File.new()
-	if not f.file_exists(path):
+	if not File.new().file_exists(path):
 		var img = Image.new()
 		img.create(32, 32, false, Image.FORMAT_RGBA8)
-		img.fill(Color(0.18, 0.55, 0.95))
+		img.fill(Color(0.96, 0.96, 0.96))
 		img.save_png(path)
 	return path
+
+# CreateLabel returns nothing, so find the Label it just added by its text,
+# within this panel only, to update it later.
+func _panel_label(panel, key : String, text : String) -> void:
+	var marker = "__mcp_%s__" % key
+	panel.CreateLabel(marker)
+	var found = _find_label(panel, marker, 0)
+	if found != null:
+		found.text = text
+		_panel_labels[key] = found
+
+func _find_label(node, text : String, depth : int):
+	if depth > 6 or node == null:
+		return null
+	for child in node.get_children():
+		if child is Label and child.text == text:
+			return child
+		var deeper = _find_label(child, text, depth + 1)
+		if deeper != null:
+			return deeper
+	return null
+
+func _set_panel_text(key : String, text : String) -> void:
+	var label = _panel_labels.get(key)
+	if label != null and is_instance_valid(label):
+		label.text = text
+
+func _note_request(cmd : String) -> void:
+	if cmd == "" or cmd == "ping":
+		return
+	_last_request = "%s at %s" % [cmd, _clock()]
+	_refresh_panel()
+
+func _clock() -> String:
+	var t = OS.get_time()
+	return "%02d:%02d:%02d" % [t["hour"], t["minute"], t["second"]]
+
+func _refresh_panel() -> void:
+	if _panel == null:
+		return
+	_set_panel_text("last", "Last request: " + (_last_request if _last_request != "" else "none yet"))
+	_set_panel_text("history", "Assistant history: %d of %d steps" % [_undo_stack.size(), MAX_UNDO_OPS])
+	var verbose = _panel_controls.get("verbose")
+	if verbose != null and is_instance_valid(verbose) and verbose.pressed != _verbose:
+		verbose.set_pressed_no_signal(_verbose)
+
+func _captures_text(keep : int) -> String:
+	return "Keep the last %d screenshots and exports" % keep
+
+func _settings_path() -> String:
+	var base = _state_directory()
+	return base.plus_file(SETTINGS_FILE) if base != "" else ""
+
+func _read_settings() -> Dictionary:
+	var path = _settings_path()
+	var f = File.new()
+	if path == "" or not f.file_exists(path) or f.open(path, File.READ) != OK:
+		return {}
+	var parsed = JSON.parse(f.get_as_text())
+	f.close()
+	if parsed.error != OK or typeof(parsed.result) != TYPE_DICTIONARY:
+		return {}
+	return parsed.result
+
+# Only the _on_panel_* handlers call this; check_engine_guards enforces it.
+func _panel_write_setting(key : String, value) -> void:
+	var settings = _read_settings()
+	settings[key] = value
+	var path = _settings_path()
+	var f = File.new()
+	if path == "" or f.open(path, File.WRITE) != OK:
+		print("[mcp-bridge] could not write %s" % path)
+		return
+	f.store_line(JSON.print(settings, "\t"))
+	f.close()
+
+func _on_panel_pause(pressed : bool) -> void:
+	_paused = pressed
+	print("[mcp-bridge] AI edits %s from the panel" % ("paused" if pressed else "resumed"))
+
+func _on_panel_undo() -> void:
+	if _saving() or _export_running():
+		_set_panel_text("last", "Cannot undo while Dungeondraft is saving or exporting")
+		return
+	var result = _do_undo()
+	if result.get("ok", false) and result["result"].get("undone", false):
+		_set_panel_text("last", "Undid the assistant's %s at %s" % [result["result"]["kind"], _clock()])
+	elif result.get("ok", false):
+		_set_panel_text("last", "Nothing of the assistant's to undo")
+	else:
+		_set_panel_text("last", "Could not undo: " + str(result.get("error", "")))
+	_set_panel_text("history", "Assistant history: %d of %d steps" % [_undo_stack.size(), MAX_UNDO_OPS])
+
+func _on_panel_update_check(pressed : bool) -> void:
+	_panel_write_setting("update_check", pressed)
+
+func _on_panel_snap_default(index : int) -> void:
+	if index >= 0 and index < SNAP_DEFAULT_VALUES.size():
+		_panel_write_setting("snap_default", SNAP_DEFAULT_VALUES[index])
+
+func _on_panel_captures(value : float) -> void:
+	_set_panel_text("captures", _captures_text(int(value)))
+	_panel_write_setting("capture_retention", int(value))
+
+func _on_panel_verbose(pressed : bool) -> void:
+	_verbose = pressed
+
+func _on_panel_open_output() -> void:
+	var folder = _state_directory().plus_file(OUTPUT_SUBDIR)
+	if folder == "":
+		return
+	Directory.new().make_dir_recursive(folder)
+
+	if OS.get_name() == "OSX":
+		OS.execute("/usr/bin/open", [folder], false)
+	elif OS.get_name() == "Windows":
+		OS.shell_open(folder)
+	else:
+		_open_folder_unix(folder)
+
+func _open_folder_unix(folder : String) -> void:
+	var found = []
+	OS.execute("/bin/sh", ["-c", "command -v xdg-open || command -v wslpath || true"], true, found)
+	var opener = str(found[0]).strip_edges() if found.size() > 0 else ""
+	if opener.ends_with("/xdg-open"):
+		OS.execute(opener, [folder], false)
+	elif opener.ends_with("/wslpath"):
+		OS.execute("/bin/sh", ["-c", "explorer.exe \"$(wslpath -w \"$1\")\"", "sh", folder], false)
+	elif _panel_labels.has("output"):
+		_panel_labels["output"].text = "No file manager found. Captures are in: " + folder
 
 # A create/group record can age out while a later merge still owns its detached
 # wall. Keep that node alive until the merge itself leaves history.

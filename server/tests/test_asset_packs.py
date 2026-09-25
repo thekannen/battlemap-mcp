@@ -206,6 +206,41 @@ def test_wait_for_save_refuses_a_stale_save(monkeypatch):
     assert "never reported finishing" in str(excinfo.value)
 
 
+def test_wait_for_save_reports_a_save_that_died_after_another_save(monkeypatch):
+    """The Unofficial Patch rescues a wedged save by writing a backup, which ends
+    the stale marker. The bridge's last_failed survives it, and the waiter says
+    at once that the file was not written and a retry is safe.
+    """
+    import time as _time
+
+    import pytest as _pytest
+
+    from battlemap_mcp import server
+    from battlemap_mcp.errors import ValidationError
+
+    wanted = "/maps/inn.dungeondraft_map"
+    monkeypatch.setattr(
+        server.bridge,
+        "request",
+        lambda command, **p: _saving(
+            saves_seen=9,
+            last_saved="user://backups/backup_1790.dungeondraft_map",
+            last_failed=wanted,
+        ),
+    )
+    started = _time.time()
+    result = server._wait_for_save(expected_path=wanted, saves_before=8, timeout=30, strict=False)
+    assert _time.time() - started < 5, "waited for a save that was already dead"
+    assert result["completed"] is False and result["reason"] == "failed", result
+    assert "call save_map again" in result["note"]
+    # Nothing in the reply may read as though this map, or a backup of it, was saved.
+    assert result["path"] == wanted, result
+    assert "last_saved" not in result and "is_backup" not in result, result
+    assert result["other_file_saved"] == "user://backups/backup_1790.dungeondraft_map", result
+    with _pytest.raises(ValidationError):
+        server._wait_for_save(expected_path=wanted, saves_before=8, timeout=30)
+
+
 def test_wait_for_save_is_not_satisfied_by_an_autosave(monkeypatch):
     """Runtime behavior and validation."""
     import pytest as _pytest

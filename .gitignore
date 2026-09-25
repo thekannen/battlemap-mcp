@@ -12,4 +12,3 @@ venv/
 .DS_Store
 .mcp.json
 mono_crash*.json
-mod/battlemap-mcp-bridge/icons/mcp_bridge.png

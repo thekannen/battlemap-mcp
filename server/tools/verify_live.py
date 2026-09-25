@@ -549,6 +549,17 @@ def main() -> int:
     # doubles as a check that the signal wiring survived the map load.
     check("get_recent_nodes", lambda: bridge.request("get_recent_nodes", since=0, limit=5))
     check("get_tool_layer", lambda: bridge.request("get_tool_layer", tool="ObjectTool"))
+    # Read-only whether or not the Custom Snap Mod is installed; the UAT's
+    # snap group checks the grid against the mod's own snapping.
+    check("get_snap_settings", lambda: bridge.request("get_snap_settings"))
+    # A checkpoint rolled back at once reverses nothing, so this is safe on a
+    # map in progress; the UAT's checkpoint group rolls back real work.
+    check("checkpoint", lambda: bridge.request("checkpoint", label="verify-live"))
+    check("list_checkpoints", lambda: bridge.request("list_checkpoints"))
+    check(
+        "rollback_checkpoint",
+        lambda: bridge.request("rollback_checkpoint", label="verify-live"),
+    )
     check(
         "list_tool_controls",
         lambda: bridge.request("list_tool_controls", tool="ObjectTool"),

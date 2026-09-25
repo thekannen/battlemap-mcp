@@ -30,14 +30,19 @@ def test_bridge_payload_supports_vanilla_only_asset_filtering():
     assert 'begins_with("res://textures/")' in bridge
 
 
-def test_bridge_payload_creates_its_tool_icon_in_a_user_writable_location():
+def test_bridge_payload_never_writes_into_its_own_folder():
     """Installing a mod under Program Files must not cause a startup write error."""
+    import re
+
     from battlemap_mcp.installer import payload_root
 
     bridge = payload_root().joinpath("scripts", "tools", "mcp_bridge.gd").read_text()
 
+    assert payload_root().joinpath("icons", "mcp_bridge.png").read_bytes().startswith(b"\x89PNG")
     assert 'var path = "user://mcp_bridge.png"' in bridge
-    assert 'Global.Root + "icons/mcp_bridge.png"' not in bridge
+    # The icon function saves only to that user:// path.
+    icon = re.search(r"func _panel_icon\(\).*?(?=\nfunc )", bridge, re.S).group(0)
+    assert re.findall(r"save_png\((\w+)\)", icon) == ["path"]
 
 
 def test_bridge_payload_accepts_an_evaluator_dedicated_listen_port():

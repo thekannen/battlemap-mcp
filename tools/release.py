@@ -23,7 +23,15 @@ from pathlib import Path
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-MOD_FILES = ("mcp_bridge.ddmod", "scripts/tools/mcp_bridge.gd", "LICENSE")
+MOD_FILES = (
+    "mcp_bridge.ddmod",
+    "scripts/tools/mcp_bridge.gd",
+    "LICENSE",
+    "icons/mcp_bridge.png",
+)
+# Text payload, held to LF. The panel icon is binary: a PNG header itself
+# contains a CR byte (\x89PNG\r\n), so it is exempt from require_lf.
+MOD_TEXT_FILES = tuple(name for name in MOD_FILES if not name.endswith(".png"))
 # Desktop shells drop these into any directory a user browses, at any depth.
 OS_METADATA = frozenset({".DS_Store", "Thumbs.db", "desktop.ini", ".AppleDouble"})
 # Artifacts the running editor writes back into a payload directory, by path
@@ -34,7 +42,10 @@ OS_METADATA = frozenset({".DS_Store", "Thumbs.db", "desktop.ini", ".AppleDouble"
 # generated its mod icon into, could not package a release at all. The
 # allowlist still rejects everything else, which is what guards against a
 # stray log or key sitting in the payload directory.
-MOD_ARTIFACTS = frozenset({"icons/mcp_bridge.png"})
+# The panel icon used to be generated INTO this folder at runtime and was
+# tolerated here; since #176 it is a real, shipped file drawn by
+# tools/make_icon.py, and the bridge only reads it.
+MOD_ARTIFACTS: frozenset[str] = frozenset()
 MOD_ROOT = "battlemap-mcp-bridge"
 SERVER_FILES = (
     "__init__.py",
@@ -48,13 +59,16 @@ SERVER_FILES = (
     "errors.py",
     "floorplan.py",
     "installer.py",
+    "lifecycle.py",
     "placement.py",
     "preflight.py",
     "scene.py",
     "server.py",
+    "snapping.py",
     "state_paths.py",
     "timing.py",
     "updates.py",
+    "user_settings.py",
     "validation.py",
 )
 SKILL_FILES = (
@@ -198,7 +212,7 @@ def require_lf(base, names):
 def build_mod(root, out, version):
     base = root / "mod" / MOD_ROOT
     validate_tree(base, MOD_FILES, MOD_ARTIFACTS)
-    require_lf(base, MOD_FILES)
+    require_lf(base, MOD_TEXT_FILES)
     out.mkdir(parents=True, exist_ok=True)
     archive = out / f"battlemap-mcp-mod-{version}.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zipped:
@@ -598,7 +612,7 @@ def build(
             shutil.copy2(path, package / path.name)
         for name in ("pyproject.toml", "hatch_build.py"):
             shutil.copy2(root / "server" / name, stage / "server" / name)
-        ignore_metadata = shutil.ignore_patterns(*OS_METADATA, "mcp_bridge.png")
+        ignore_metadata = shutil.ignore_patterns(*OS_METADATA)
         shutil.copytree(root / "mod", stage / "mod", ignore=ignore_metadata)
         shutil.copytree(root / "skills", stage / "skills", ignore=ignore_metadata)
         environment = work / "venv"
