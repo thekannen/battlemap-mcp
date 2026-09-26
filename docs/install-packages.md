@@ -220,9 +220,35 @@ Keep the previous companion until replacement setup succeeds. Setup does not
 silently remove a different registration. If the `claude` command is missing,
 finish installing Claude Code, reopen the Connect file, and try again.
 
-**Other MCP clients:** add a local STDIO server named `battlemap`, with the
-companion executable's full path as the command and no arguments. Your client
-starts it for you. See [technical configuration](TECHNICAL_REFERENCE.md).
+### Other MCP clients
+
+Any AI client that can run a local (STDIO) MCP server works; Codex and Claude
+Code just have a Connect file. In your client's MCP settings, add a local STDIO
+server named `battlemap`, with the companion executable's full path as the
+command and no arguments: `battlemap-mcp.exe` on Windows, `battlemap-mcp` on
+macOS and Linux, inside the folder you extracted. Your client starts it for
+you. See [technical configuration](TECHNICAL_REFERENCE.md).
+
+**OpenCode**, as its documentation describes it: add the server to
+`~/.config/opencode/opencode.json` (or an `opencode.json` in your project),
+then restart OpenCode:
+
+```json
+{
+  "mcp": {
+    "battlemap": {
+      "type": "local",
+      "command": ["/full/path/to/battlemap-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+The map-making skills are in the companion folder under
+`_internal/battlemap_mcp/skills_payload/`, one folder per skill. To use them in
+a client without a Connect file, copy those folders to wherever the client
+loads skills from; for OpenCode, that is `~/.config/opencode/skills/`.
 
 ## Update or remove
 

@@ -1,6 +1,6 @@
 # battlemap-mcp
 
-An AI collaborator for your Dungeondraft maps: a local bridge that lets Codex or Claude Code build, inspect, and refine the map you have open, using assets you already own.
+An AI collaborator for your Dungeondraft maps: a local bridge that lets your AI assistant (Codex, Claude Code, or any other MCP client) build, inspect, and refine the map you have open, using assets you already own.
 
 ## Support creators first
 
@@ -64,7 +64,7 @@ The included art-direction and visual-review skills help the assistant plan and 
 
 ## Get started
 
-You need **Dungeondraft 1.2.0.1** and **Codex or Claude Code**, installed on the same computer. The companion download includes everything else you need.
+You need **Dungeondraft 1.2.0.1** and an AI client that can run local MCP servers, installed on the same computer. Codex and Claude Code connect with one double-click; other clients, such as OpenCode, need a one-time manual setup ([other clients](docs/install-packages.md#other-mcp-clients)). The companion download includes everything else you need.
 
 Follow the Windows instructions below, or choose [macOS](docs/install-packages.md#macos) or [Linux](docs/install-packages.md#linux).
 
@@ -112,7 +112,7 @@ Do not run files while they are still inside the ZIP. Do not double-click `battl
 
 If **Connect Codex** says automatic connection is unavailable, you can finish in the app without installing another tool: open **Settings → MCP servers → Add server**, choose **STDIO**, name it `battlemap`, and paste the **Command** path shown by the Connect window. Leave arguments empty, save, and restart the connection. See [OpenAI's MCP setup instructions](https://developers.openai.com/codex/mcp/).
 
-**Claude Code** means the Claude coding client, not the Claude chat app. See [client setup help](docs/install-packages.md#client-help) for other clients or an existing Claude Code connection.
+**Claude Code** means the Claude coding client, not the Claude chat app. See [client setup help](docs/install-packages.md#client-help) for an existing Claude Code connection, or [other MCP clients](docs/install-packages.md#other-mcp-clients).
 
 ### 4. Check the connection
 
@@ -170,7 +170,7 @@ Pick packs that suit the scene rather than all of them: including a very large l
 
 ## Privacy
 
-Nothing is collected: the mod and companion make no internet connections of their own. See [Privacy](docs/PRIVACY.md) for what your AI client receives and how to remove saved images.
+Nothing is collected. The mod and companion talk only to each other, on your computer. Their one internet connection is a once-a-day check for a newer release, which you can turn off. See [Privacy](docs/PRIVACY.md) for details, what your AI client receives, and how to remove saved images.
 
 ## Go deeper
 
