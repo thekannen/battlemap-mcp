@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from battlemap_mcp.bridge_client import BridgeClient
+from battlemap_mcp.bridge_client import COMPANION_TOOLS, BridgeClient
 from battlemap_mcp.errors import (
     BridgeCommandError,
     BridgePeerUntrustedError,
@@ -84,6 +84,34 @@ def test_command_error_raises_with_cmd_and_params(fake_bridge):
     assert exc.value.params["asset"] == "a.png"
 
 
+def test_a_companion_tool_sent_to_the_bridge_says_where_it_lives(fake_bridge):
+    fake_bridge.responses["validate_placements"] = {
+        "ok": False,
+        "error": "unknown cmd: validate_placements",
+    }
+    with pytest.raises(BridgeCommandError) as exc:
+        client(fake_bridge).request("validate_placements")
+    assert "battlemap_mcp.server.validate_placements()" in str(exc.value)
+    assert "not stale" in str(exc.value)
+
+
+def test_companion_tools_are_exactly_the_tools_the_bridge_lacks():
+    import asyncio
+    import re
+    from pathlib import Path
+
+    from battlemap_mcp import server
+
+    tools = {tool.name for tool in asyncio.run(server.mcp.list_tools())}
+    source = (
+        Path(__file__).resolve().parents[2] / "mod/battlemap-mcp-bridge/scripts/tools/mcp_bridge.gd"
+    ).read_text(encoding="utf-8")
+    start = source.index("\tmatch cmd:")
+    end = source.index('_: return _err("unknown cmd', start)
+    commands = set(re.findall(r'^\t\t"([a-z_0-9]+)"', source[start:end], re.M))
+    assert tools - commands == COMPANION_TOOLS
+
+
 def test_malformed_response_raises_protocol_error(fake_bridge):
     fake_bridge.mode = "malformed"
     with pytest.raises(BridgeProtocolError):
@@ -126,3 +154,47 @@ def test_a_silent_listener_is_reported_as_a_busy_editor_not_a_missing_one():
     message = str(exc.value)
     assert "not answering" in message
     assert "Is Dungeondraft running" not in message
+
+
+def _token_folders(tmp_path, monkeypatch, *, newer_sibling: bool):
+    import os
+
+    from battlemap_mcp import bridge_client
+
+    # Neutral names: the public export renames this package's state folder.
+    mine = tmp_path / "release-state" / "mcp_bridge_token"
+    mine.parent.mkdir()
+    mine.write_text("old")
+    os.utime(mine, (1_000_000, 1_000_000))
+    other = tmp_path / "dev-state" / "mcp_bridge_token"
+    other.parent.mkdir()
+    other.write_text("new")
+    stamp = 2_000_000 if newer_sibling else 500_000
+    os.utime(other, (stamp, stamp))
+    monkeypatch.delenv("BATTLEMAP_MCP_TOKEN_FILE", raising=False)
+    monkeypatch.setattr(bridge_client, "_token_path", lambda: mine)
+    return mine, other
+
+
+def test_a_token_mismatch_names_a_newer_token_elsewhere(tmp_path, monkeypatch):
+    from battlemap_mcp.bridge_client import token_mismatch_hint
+
+    mine, other = _token_folders(tmp_path, monkeypatch, newer_sibling=True)
+    hint = token_mismatch_hint()
+    assert str(mine) in hint
+    assert f"A newer token is at {other}" in hint
+
+
+def test_an_older_sibling_token_is_not_blamed(tmp_path, monkeypatch):
+    from battlemap_mcp.bridge_client import token_mismatch_hint
+
+    _token_folders(tmp_path, monkeypatch, newer_sibling=False)
+    hint = token_mismatch_hint()
+    assert "newer token" not in hint
+    assert "different copy of the bridge" in hint
+
+
+def test_an_impostor_error_says_where_the_token_came_from(fake_bridge):
+    fake_bridge.mode = "impostor"
+    with pytest.raises(BridgePeerUntrustedError, match="read its token from"):
+        client(fake_bridge).request("ping")

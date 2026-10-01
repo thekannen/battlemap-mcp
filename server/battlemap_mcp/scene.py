@@ -44,6 +44,7 @@ EMITTER_STEMS = (
     "sconce",
     "hearth",
     "chandelier",
+    "candelabr",
     "oven",
     "furnace",
     "stove",
@@ -64,6 +65,8 @@ EMITTER_STEMS = (
 # with the forge; firewood shares `fire` with a fire.
 NOT_A_SOURCE = frozenset({"mold", "lever", "firewood"})
 
+SOURCE_FOLDERS = frozenset({"lightsources", "light_sources"})
+
 # A sample is ground when a CHOSEN texture carries more than this much of its
 # weight. A blended edge between a chosen material and the default is ground.
 PAINTED_EPSILON = 0.02
@@ -79,10 +82,13 @@ def _tokens(name: str) -> list[str]:
 
 
 def is_emitter(asset: str) -> bool:
-    """Whether an asset's name marks it as something that could give off light."""
+    """Whether an asset's name or folder marks it as something that could give off light."""
     tokens = _tokens(asset)
     if NOT_A_SOURCE.intersection(tokens):
         return False
+    folders = {part.lower() for part in asset.split("/")[:-1]}
+    if folders & SOURCE_FOLDERS:
+        return True
     return any(token.startswith(stem) for token in tokens for stem in EMITTER_STEMS)
 
 
@@ -192,7 +198,7 @@ def find_unexplained_lights(
     reach: float = DEFAULT_EMITTER_REACH,
 ) -> dict:
     """Report lights with nothing nearby that could be emitting them."""
-    emitters = [(o, _asset_name(o)) for o in objects if is_emitter(_asset_name(o))]
+    emitters = [(o, _asset_name(o)) for o in objects if is_emitter(str(o.get("asset", "")))]
 
     explained: list[dict] = []
     unexplained: list[dict] = []

@@ -230,3 +230,39 @@ def test_high_furniture_mid_wall_still_crosses():
     table = obj(50, 4480, 1536, 200, 200, layer=700)
     report = find_intrusions([table], [ROOM], [])
     assert ids(report["crossing_walls"]) == [50]
+
+
+# A north wall along y = 1000; the room is below it (y grows down).
+NORTH_WALL = {"id": 2, "loop": False, "points": [[0, 1000], [2000, 1000]]}
+PAINTING = "res://packs/FA/textures/objects/Decor/Art/Framed_Paintings/Framed_Painting_Wood_Dark_A_2x1.webp"
+
+
+def test_a_painting_hung_on_its_wall_is_mounted_not_crossing():
+    painting = obj(20, 500, 1020, 200, 100, asset=PAINTING)  # 30 behind the line, 70 in front
+    report = find_intrusions([painting], [NORTH_WALL], [])
+    assert report["crossing_walls"] == []
+    assert ids(report["wall_mounted"]) == [20]
+    assert report["wall_mounted"][0]["faces_room"] is True
+    assert report["ok"] is True
+
+
+def test_a_mounted_fixture_facing_the_wall_says_so():
+    lantern = obj(
+        21, 500, 1020, 100, 100, rotation=180, asset="x/Wall_Lantern_Metal_Brass_A_1x1.webp"
+    )
+    report = find_intrusions([lantern], [NORTH_WALL], [])
+    assert report["wall_mounted"][0]["faces_room"] is False
+
+
+def test_a_fixture_through_the_wall_still_crosses():
+    painting = obj(22, 500, 1000, 200, 300, asset=PAINTING)  # 150 out the far side
+    report = find_intrusions([painting], [NORTH_WALL], [])
+    assert ids(report["crossing_walls"]) == [22]
+    assert report["wall_mounted"] == []
+    assert report["ok"] is False
+
+
+def test_ordinary_furniture_at_the_same_depth_still_crosses():
+    chair = obj(23, 500, 1020, 200, 100)
+    report = find_intrusions([chair], [NORTH_WALL], [])
+    assert ids(report["crossing_walls"]) == [23]

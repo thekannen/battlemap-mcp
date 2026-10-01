@@ -89,7 +89,9 @@ def dispatch_installer(args: argparse.Namespace) -> int:
             print(f"live identity: {identity.status}: {identity.detail}")
             print(f"  loaded mod root: {identity.bridge_root!r}")
             print(f"  process ID: {identity.process_id}; source SHA-256: {identity.bridge_sha256}")
-            if identity.status == "unavailable":
+            if identity.status == "untrusted":
+                print("  A bridge is answering, but it does not share this companion's token.")
+            elif identity.status == "unavailable":
                 print(
                     "  Start Dungeondraft, enable Battlemap MCP Bridge, then open or create a map."
                 )
@@ -369,6 +371,8 @@ def _brief_doctor(report: installer.DoctorReport, *, live: bool) -> int:
         print("Wait for loading to finish and close any dialogs, then check again.")
     else:
         print("Dungeondraft is running a different or older Battlemap MCP Bridge.")
+        if identity.status == "untrusted":
+            print(identity.detail)
         print("Use the mod ZIP from the same release as this companion. Keep only one copy.")
         print("Fully quit and reopen Dungeondraft, then open your map and check again.")
     return 1

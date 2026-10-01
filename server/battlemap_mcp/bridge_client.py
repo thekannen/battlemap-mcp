@@ -41,6 +41,19 @@ DEFAULT_PORT = 8787
 # the mod can add context to the message without breaking the retry.
 TOKEN_REJECTED = "bad or missing token"
 
+COMPANION_TOOLS = frozenset(
+    {
+        "clear_captures",
+        "get_export",
+        "inspect_dungeondraft_installation",
+        "install_dungeondraft_bridge",
+        "prepare_map_with_packs",
+        "validate_floorplan",
+        "validate_placements",
+        "validate_scene",
+    }
+)
+
 __all__ = [
     "BridgeClient",
     "BridgeError",
@@ -56,6 +69,51 @@ def _state_file(name: str, *, _platform: str | None = None) -> pathlib.Path:
     return state_dir(_platform=_platform if _platform is not None else sys.platform) / name
 
 
+def _token_path() -> pathlib.Path:
+    override = os.environ.get("BATTLEMAP_MCP_TOKEN_FILE")
+    return pathlib.Path(override) if override else _state_file("mcp_bridge_token")
+
+
+def _written(path: pathlib.Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def token_mismatch_hint() -> str:
+    """Where this companion's token came from, and whether a newer one exists."""
+    path = _token_path()
+    mine = _written(path)
+    stamp = (
+        "" if mine is None else f", written {time.strftime('%Y-%m-%d %H:%M', time.localtime(mine))}"
+    )
+    hint = f"This companion read its token from {path}{stamp}."
+    newer: list[tuple[float, pathlib.Path]] = []
+    if "BATTLEMAP_MCP_TOKEN_FILE" not in os.environ:
+        try:
+            for folder in path.parent.parent.iterdir():
+                candidate = folder / path.name
+                written = _written(candidate) if folder != path.parent else None
+                if written is not None and (mine is None or written > mine):
+                    newer.append((written, candidate))
+        except OSError:
+            pass
+    if newer:
+        newest = max(newer)[1]
+        return (
+            f"{hint} A newer token is at {newest}: Dungeondraft is probably running a "
+            "different copy of the bridge (a development build or another release) that "
+            "keeps its state there. Use the mod and companion from the same release, keep "
+            "one bridge copy in the mods folder, and restart Dungeondraft."
+        )
+    return (
+        f"{hint} Dungeondraft may be running a different copy of the bridge. Use the mod "
+        "and companion from the same release, keep one bridge copy in the mods folder, "
+        "and restart Dungeondraft."
+    )
+
+
 def _resolve_token() -> str:
     """Read the shared token the mod wrote at startup.
 
@@ -63,8 +121,7 @@ def _resolve_token() -> str:
     unauthenticated request: the protection has to fail visibly or it quietly
     disappears the first time something moves.
     """
-    override = os.environ.get("BATTLEMAP_MCP_TOKEN_FILE")
-    path = pathlib.Path(override) if override else _state_file("mcp_bridge_token")
+    path = _token_path()
     try:
         token = path.read_text(encoding="utf-8").strip()
     except OSError as exc:
@@ -232,7 +289,8 @@ class BridgeClient:
             )
         ):
             raise BridgeHandshakeUntrustedError(
-                "The peer could not prove it knows the bridge token; the command was not sent."
+                "The peer could not prove it knows the bridge token; the command was not "
+                f"sent. {token_mismatch_hint()}"
             )
         return client_nonce, server_nonce
 
@@ -352,7 +410,11 @@ class BridgeClient:
             ) from exc
 
         if not resp.get("ok"):
-            raise BridgeCommandError(
-                resp.get("error", "unknown bridge error"), cmd=cmd, params=params
-            )
+            message = resp.get("error", "unknown bridge error")
+            if cmd in COMPANION_TOOLS and str(message).startswith("unknown cmd"):
+                message = (
+                    f"{message}. {cmd} is computed by the companion, not the bridge: "
+                    f"call battlemap_mcp.server.{cmd}() instead. The bridge is not stale."
+                )
+            raise BridgeCommandError(message, cmd=cmd, params=params)
         return resp.get("result", {})

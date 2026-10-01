@@ -16,7 +16,7 @@ from shutil import copytree, move, rmtree
 from typing import Any
 
 from .bridge_client import PROTOCOL_VERSION, BridgeClient
-from .errors import BridgeError
+from .errors import BridgeError, BridgeHandshakeUntrustedError
 
 
 class InstallConflictError(RuntimeError):
@@ -158,6 +158,8 @@ def live_bridge_identity() -> LiveIdentity:
     expected = hashlib.sha256(source.encode("utf-8")).hexdigest()
     try:
         result = BridgeClient().request("ping")
+    except BridgeHandshakeUntrustedError as exc:
+        return LiveIdentity("untrusted", str(exc))
     except (BridgeError, OSError, ValueError) as exc:
         return LiveIdentity("unavailable", f"Authenticated ping failed ({type(exc).__name__}).")
     if not isinstance(result, dict) or result.get("pong") is not True:

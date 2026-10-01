@@ -1025,3 +1025,16 @@ def test_raced_backup_directory_is_never_removed(monkeypatch, tmp_path):
         installer.apply_install(plan, force=True)
     assert len(raced) == 1
     assert (raced[0] / "other.txt").read_text() == "other backup"
+
+
+def test_live_doctor_reports_a_token_mismatch_as_untrusted_not_unavailable(monkeypatch):
+    from battlemap_mcp import installer
+    from battlemap_mcp.errors import BridgeHandshakeUntrustedError
+
+    def untrusted(self, command):
+        raise BridgeHandshakeUntrustedError("could not prove; A newer token is at /x")
+
+    monkeypatch.setattr(installer.BridgeClient, "request", untrusted)
+    identity = installer.live_bridge_identity()
+    assert identity.status == "untrusted"
+    assert "newer token" in identity.detail

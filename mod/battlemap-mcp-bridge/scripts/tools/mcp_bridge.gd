@@ -65,10 +65,15 @@ const MATERIAL_DEFAULT_LAYER := -400
 
 const COMPOSITE_CMDS := ["place_pattern", "scatter_objects", "build_room", "place_prefab",
 	"place_objects"]
-# Neutral opaque tint for pattern floors when no color is given. PatternShapeTool
-# has no per-texture default (and its .Color leaks across calls), so we apply a
-# deterministic wood/stone-neutral tone; callers pass an explicit color to override.
+
 const DEFAULT_PATTERN_TINT := Color(0.62, 0.5, 0.34)
+# A mask pixel darker than this cannot show a tint (the shader paints r * tint).
+const MASK_VISIBLE_RED := 0.25
+
+const MASK_DOMINANT := 0.25
+var _pack_mask_rules := {}
+const PATTERN_GREYSCALE_SAMPLE_PX := 64
+var _pattern_greyscale_cache := {}
 
 const WOXELS_PER_TILE := 256
 
@@ -1836,6 +1841,8 @@ func _get_terrain(req : Dictionary) -> Dictionary:
 			"smooth_blending is the level's blend mode: true smooth, false " +
 			"textured."),
 	}
+	if bool(req.get("render", false)):
+		out["render"] = _terrain_render_state(level, req.get("at", null))
 	if _patch_terrain_extended():
 		out["extended_slots"] = true
 		out["extended_note"] = "the Unofficial Patch's 24 terrain slots are on for " + \
@@ -1843,6 +1850,63 @@ func _get_terrain(req : Dictionary) -> Dictionary:
 			"weights do not include, so they may not sum to 1, and the bridge will " + \
 			"not paint this level"
 	return _ok(out)
+
+func _terrain_render_state(level, at) -> Dictionary:
+	var terrain = level.Terrain
+	var out := {}
+	if terrain.has_method("get_ExpandedSlots"):
+		out["expanded_slots"] = bool(terrain.get_ExpandedSlots())
+	var materials := {}
+	if terrain.has_method("get_ShaderMaterial"):
+		materials["ShaderMaterial"] = terrain.get_ShaderMaterial()
+	materials["material"] = terrain.get_material()
+	var drawn = materials["material"]
+	out["material_is_shader_material"] = drawn != null and drawn == materials.get("ShaderMaterial")
+	var pixel = null
+	if at is Array and at.size() >= 2 and terrain.has_method("WorldToTexture"):
+		pixel = terrain.WorldToTexture(Vector2(float(at[0]), float(at[1])))
+		out["pixel"] = [int(pixel.x), int(pixel.y)]
+	for key in materials.keys():
+		var mat = materials[key]
+		var desc := {}
+		if mat == null or not (mat is ShaderMaterial):
+			desc["kind"] = "none" if mat == null else str(mat.get_class())
+			out[key] = desc
+			continue
+		desc["shader"] = "" if mat.shader == null else str(mat.shader.resource_path)
+		var params := {}
+		for name in ["splat", "splat2", "texture_1", "texture_2", "texture_5", "texture_6"]:
+			var value = mat.get_shader_param(name)
+			if value == null:
+				params[name] = null
+			elif value is Texture:
+				var entry := { "path": str(value.resource_path),
+					"size": [value.get_width(), value.get_height()] }
+				if pixel != null and name.begins_with("splat"):
+					var data = value.get_data()
+					if data != null and pixel.x >= 0 and pixel.y >= 0 \
+							and pixel.x < data.get_width() and pixel.y < data.get_height():
+						data.lock()
+						var c = data.get_pixel(int(pixel.x), int(pixel.y))
+						data.unlock()
+						entry["at_pixel"] = [c.r, c.g, c.b, c.a]
+				params[name] = entry
+			else:
+				params[name] = str(value)
+		desc["params"] = params
+		out[key] = desc
+	if pixel != null:
+		for pair in [["cpu_splat", "CloneSplatImage"], ["cpu_splat2", "CloneSplatImage2"]]:
+			if pair[1] == "CloneSplatImage2" and not out.get("expanded_slots", false):
+				continue
+			var img = terrain.call(pair[1])
+			if img != null and pixel.x >= 0 and pixel.y >= 0 \
+					and pixel.x < img.get_width() and pixel.y < img.get_height():
+				img.lock()
+				var c = img.get_pixel(int(pixel.x), int(pixel.y))
+				img.unlock()
+				out[pair[0]] = [c.r, c.g, c.b, c.a]
+	return out
 
 func _terrain_slots(level) -> Array:
 	var out := []
@@ -2455,7 +2519,9 @@ func _preview_assets(req : Dictionary) -> Dictionary:
 		var nw = int(max(1, int(float(w) * factor)))
 		var nh = int(max(1, int(float(h) * factor)))
 		img.resize(nw, nh, Image.INTERPOLATE_BILINEAR)
-		if category in TILE_PREVIEW_CATEGORIES or (category == "Walls" and _is_greyscale(img)):
+
+		if (category in TILE_PREVIEW_CATEGORIES or category in ["Walls", "Patterns"]) \
+				and _is_greyscale(img):
 			_tint_image(img, DEFAULT_PATTERN_TINT)
 		# blend, not blit: these carry alpha, and blitting would punch the
 		# transparent border through the ground and lose the silhouette.
@@ -2486,6 +2552,24 @@ func _is_greyscale(img : Image) -> bool:
 				coloured += 1
 	img.unlock()
 	return opaque > 0 and coloured <= opaque / 50
+
+func _texture_is_greyscale(tex) -> bool:
+	var key = str(tex.resource_path)
+	if key != "" and _pattern_greyscale_cache.has(key):
+		return _pattern_greyscale_cache[key]
+	var answer := false
+	var img = tex.get_data()
+	if img != null:
+		img = img.duplicate()
+		if img.is_compressed():
+			img.decompress()
+		img.convert(Image.FORMAT_RGBA8)
+		if img.get_width() > 0 and img.get_height() > 0:
+			img.resize(PATTERN_GREYSCALE_SAMPLE_PX, PATTERN_GREYSCALE_SAMPLE_PX, Image.INTERPOLATE_BILINEAR)
+			answer = _is_greyscale(img)
+	if key != "":
+		_pattern_greyscale_cache[key] = answer
+	return answer
 
 # Multiply an image by a colour, keeping alpha — what the tile tools do at
 # placement, applied to a preview-sized copy. Runs after the resize, so it
@@ -2577,8 +2661,8 @@ func _list_assets(req : Dictionary) -> Dictionary:
 		"colorable_are": "indices into assets",
 		# Only when it applies. The note was attached to every listing, including
 		# the ones where `colorable` was empty and it said nothing at all.
-		"note": (("assets at the 'colorable' indices have an unpainted colour mask " +
-			"and render flat RED unless you pass color= when placing them. Colour " +
+		"note": (("assets at the 'colorable' indices have a colour mask: they take " +
+			"color= when placed, and the mask shows red without one. Colour " +
 			"is baked at placement and cannot be changed afterwards.")
 			if colorable.size() > 0 else "") })
 
@@ -3695,11 +3779,19 @@ func _place_object(req : Dictionary) -> Dictionary:
 		_apply_block_light(prop, bool(req["block_light"]))
 		out["block_light"] = bool(prop.get("BlockLight"))
 
-	if _mask_fraction(tex) > 0.0:
+	var mask = _mask_fraction(tex)
+	if mask > 0.0:
 		out["colorable"] = true
-		out["note"] = ("this asset has an unpainted colour mask and will render " +
-			"flat RED. Colour is baked at placement, so re-place it with " +
-			"color=\"#rrggbb\" — modify_object cannot repaint it.")
+		out["mask_fraction"] = stepify(mask, 0.01)
+
+		if mask >= MASK_DOMINANT:
+			out["note"] = ("this asset has an unpainted colour mask and will render " +
+				"flat RED. Colour is baked at placement, so re-place it with " +
+				"color=\"#rrggbb\" — modify_object cannot repaint it.")
+		else:
+			out["note"] = ("%d%% of this asset is a colour mask, which shows red " +
+				"untinted. Look before replacing it: colour is baked at placement.") \
+				% int(round(mask * 100.0))
 	if req.has("modulate") and str(req.get("modulate", "")) != "":
 		# Reject rather than fall back: an unusable hex would apply the identity
 		# colour and still report modulate_applied.
@@ -3720,6 +3812,7 @@ func _place_objects(req : Dictionary) -> Dictionary:
 	if Global.World.GetCurrentLevel() == null:
 		return _err("no map open")
 
+	var verdicts := {}
 	for i in range(items.size()):
 		var item = items[i]
 		if typeof(item) != TYPE_DICTIONARY:
@@ -3730,9 +3823,11 @@ func _place_objects(req : Dictionary) -> Dictionary:
 		var asset = str(item.get("asset", ""))
 		if asset == "":
 			return _err("objects[%d] has no 'asset'" % i)
-		if _asset_tex("Objects", asset) == null:
-			return _err(("objects[%d]: '%s' is not an Objects asset, so nothing was " +
-				"placed. Take paths from list_assets(category='Objects').") % [i, asset])
+		if not verdicts.has(asset):
+			verdicts[asset] = _objects_asset_problem(asset)
+		if verdicts[asset] != "":
+			return _err(("objects[%d]: '%s' %s, so nothing was placed. Take paths " +
+				"from list_assets(category='Objects').") % [i, asset, verdicts[asset]])
 
 	var placed := []
 	for i in range(items.size()):
@@ -3757,20 +3852,34 @@ func _place_objects(req : Dictionary) -> Dictionary:
 		# colourable asset placed without a colour is a flat red shape, and
 		# colour cannot be added afterwards.
 		if out.get("colorable", false):
-			entry["colorable"] = true
+			if float(out.get("mask_fraction", 1.0)) >= MASK_DOMINANT:
+				entry["colorable"] = true
+			else:
+				entry["partly_masked"] = true
 		if out.has("layer"):
 			entry["layer"] = out["layer"]
 		placed.append(entry)
 
 	var colorable := []
+	var partial := []
 	for entry in placed:
 		if entry.get("colorable", false):
 			colorable.append(entry["id"])
+		elif entry.get("partly_masked", false):
+			partial.append(entry["id"])
+			entry.erase("partly_masked")
 	var out_note = ""
 	if not colorable.empty():
 		out_note = ("ids %s were placed from colourable assets with no color= and " +
 			"render flat RED. Colour is baked at placement: delete them and place " +
 			"again with color=\"#rrggbb\".") % str(colorable)
+
+	var partial_note = ""
+	if not partial.empty():
+		var shown_partial = partial.slice(0, 19) if partial.size() > 20 else partial
+		partial_note = ("ids %s%s have a small colour mask that shows red without " +
+			"color=. Look before replacing them.") \
+			% [str(shown_partial), " ..." if partial.size() > 20 else ""]
 	if compact:
 		# Counts and id ranges, not an entry per object: echoing 600 entries
 		# back is the token cost the file path exists to avoid.
@@ -3782,9 +3891,9 @@ func _place_objects(req : Dictionary) -> Dictionary:
 				% [colorable.size(), str(shown), " ..." if colorable.size() > 20 else ""]
 		return _ok({ "placed": placed.size(), "id_ranges": _id_ranges(_ids_of(placed)),
 			"colorable_without_color": colorable.size(), "undoable": true,
-			"note": out_note })
+			"note": (out_note + " " + partial_note).strip_edges() })
 	return _ok({ "placed": placed.size(), "objects": placed,
-		"ids": _ids_of(placed), "undoable": true, "note": out_note })
+		"ids": _ids_of(placed), "undoable": true, "note": (out_note + " " + partial_note).strip_edges() })
 
 # [[first, last], ...] for runs of consecutive ids, in placement order.
 func _id_ranges(ids : Array) -> Array:
@@ -4115,10 +4224,12 @@ func _place_pattern(req : Dictionary) -> Dictionary:
 
 	var color
 	var used_default = false
+	var greyscale = null
 	if req.has("color") and str(req.get("color", "")) != "":
 		color = _color(req["color"], DEFAULT_PATTERN_TINT)
 	else:
-		color = DEFAULT_PATTERN_TINT
+		greyscale = _texture_is_greyscale(tex)
+		color = DEFAULT_PATTERN_TINT if greyscale else Color(1, 1, 1)
 		used_default = true
 	if color.a < 0.05:
 		color = Color(color.r, color.g, color.b, 1.0)
@@ -4154,6 +4265,7 @@ func _place_pattern(req : Dictionary) -> Dictionary:
 		# Signal we applied the neutral default (no per-texture tint exists for
 		# patterns; pass an explicit `color` for an exact look).
 		result["used_default_tint"] = true
+		result["texture_greyscale"] = greyscale
 	# Enumeration is grouped by layer; the new shape need not be last.
 	for shape in all:
 		if existing_shapes.has(shape.get_instance_id()):
@@ -4182,10 +4294,11 @@ func _scatter_objects(req : Dictionary) -> Dictionary:
 		return _err("'assets' must be a non-empty array of Objects asset paths")
 
 	for candidate in assets:
-		if _asset_tex("Objects", str(candidate)) == null:
-			return _err(("'%s' is not an Objects asset, so nothing was scattered. " +
-				"Every entry in 'assets' must come from list_assets(category='Objects').")
-				% str(candidate))
+		var problem = _objects_asset_problem(str(candidate))
+		if problem != "":
+			return _err(("'%s' %s, so nothing was scattered. Every entry in " +
+				"'assets' must come from list_assets(category='Objects').")
+				% [str(candidate), problem])
 	var r = req.get("rect", null)
 	if typeof(r) != TYPE_ARRAY or r.size() < 4:
 		return _err("'rect' must be [x, y, w, h] in woxels")
@@ -4498,6 +4611,7 @@ func _set_terrain_slot(req : Dictionary) -> Dictionary:
 	var tex = _asset_tex("Terrain", req.get("asset", ""))
 	if tex == null: return _err("could not load terrain asset: " + str(req.get("asset")))
 	var slot = int(req.get("slot", 0))
+	_expand_for_slot(level, slot)
 	level.Terrain.SetTexture(tex, slot)
 	level.Terrain.UpdateSplat()
 	return _ok({ "slot": slot })
@@ -4513,6 +4627,7 @@ func _fill_terrain(req : Dictionary) -> Dictionary:
 	if req.has("asset"):
 		var tex = _asset_tex("Terrain", req["asset"])
 		if tex == null: return _err("could not load terrain asset: " + str(req["asset"]))
+		_expand_for_slot(level, slot)
 		level.Terrain.SetTexture(tex, slot)
 	level.Terrain.Fill(slot)
 	level.Terrain.UpdateSplat()
@@ -4529,6 +4644,7 @@ func _paint_terrain(req : Dictionary) -> Dictionary:
 	if req.has("asset"):
 		var tex = _asset_tex("Terrain", req["asset"])
 		if tex == null: return _err("could not load terrain asset: " + str(req["asset"]))
+		_expand_for_slot(level, slot)
 		level.Terrain.SetTexture(tex, slot)
 	var world = _xy(req, Global.World.WoxelDimensions * 0.5)
 	# Convert the brush center and radius into texture space (radius scales by
@@ -4539,8 +4655,9 @@ func _paint_terrain(req : Dictionary) -> Dictionary:
 
 	var sp = _open_splat(level, slot)
 	if sp == null: return _err("could not read splat image for slot " + str(slot))
+	var unbound = _slot_unbound(level, slot)
+	if unbound != null: return unbound
 	var img = sp.img
-	var ch = sp.ch
 	var iw = img.get_width()
 	var ih = img.get_height()
 	var x0 = int(floor(center.x - trad))
@@ -4548,7 +4665,7 @@ func _paint_terrain(req : Dictionary) -> Dictionary:
 	var x1 = int(ceil(center.x + trad))
 	var y1 = int(ceil(center.y + trad))
 	var painted := 0
-	img.lock()
+	_splat_lock(sp)
 	for iy in range(max(y0, 0), min(y1 + 1, ih)):
 		for ix in range(max(x0, 0), min(x1 + 1, iw)):
 			var d = Vector2(ix + 0.5, iy + 0.5).distance_to(center)
@@ -4560,10 +4677,10 @@ func _paint_terrain(req : Dictionary) -> Dictionary:
 			var w = rate * falloff
 			if w <= 0.0:
 				continue
-			img.set_pixel(ix, iy, _splat_set_channel(img.get_pixel(ix, iy), ch, w))
+			_splat_paint(sp, ix, iy, w)
 			painted += 1
-	img.unlock()
-	_close_splat(level, sp.which, img)
+	_splat_unlock(sp)
+	_close_splat(level, sp)
 	return _ok({ "painted_slot": slot, "pixels": painted })
 
 func _paint_path(req : Dictionary) -> Dictionary:
@@ -4582,6 +4699,7 @@ func _paint_path(req : Dictionary) -> Dictionary:
 	if req.has("asset"):
 		var tex = _asset_tex("Terrain", req["asset"])
 		if tex == null: return _err("could not load terrain asset: " + str(req["asset"]))
+		_expand_for_slot(level, slot)
 		level.Terrain.SetTexture(tex, slot)
 
 	# Map the polyline into texture space; radius scales by the woxel->texture
@@ -4599,8 +4717,9 @@ func _paint_path(req : Dictionary) -> Dictionary:
 
 	var sp = _open_splat(level, slot)
 	if sp == null: return _err("could not read splat image for slot " + str(slot))
+	var unbound = _slot_unbound(level, slot)
+	if unbound != null: return unbound
 	var img = sp.img
-	var ch = sp.ch
 	var iw = img.get_width()
 	var ih = img.get_height()
 	# Bounding box of the whole stroke, padded by the brush radius.
@@ -4609,7 +4728,7 @@ func _paint_path(req : Dictionary) -> Dictionary:
 	var x1 = min(int(ceil(mx.x + trad)), iw - 1)
 	var y1 = min(int(ceil(mx.y + trad)), ih - 1)
 	var painted := 0
-	img.lock()
+	_splat_lock(sp)
 	for iy in range(y0, y1 + 1):
 		for ix in range(x0, x1 + 1):
 			var pix = Vector2(ix + 0.5, iy + 0.5)
@@ -4629,10 +4748,10 @@ func _paint_path(req : Dictionary) -> Dictionary:
 			var w = rate * falloff
 			if w <= 0.0:
 				continue
-			img.set_pixel(ix, iy, _splat_set_channel(img.get_pixel(ix, iy), ch, w))
+			_splat_paint(sp, ix, iy, w)
 			painted += 1
-	img.unlock()
-	_close_splat(level, sp.which, img)
+	_splat_unlock(sp)
+	_close_splat(level, sp)
 	return _ok({ "painted_slot": slot, "segments": tpts.size() - 1, "pixels": painted })
 
 # Shortest distance from point p to segment a-b (all in texture space).
@@ -4654,6 +4773,7 @@ func _fill_region(req : Dictionary) -> Dictionary:
 	if req.has("asset"):
 		var tex = _asset_tex("Terrain", req["asset"])
 		if tex == null: return _err("could not load terrain asset: " + str(req["asset"]))
+		_expand_for_slot(level, slot)
 		level.Terrain.SetTexture(tex, slot)
 
 	# Gather the shape's world-space polygon (rect -> 4 corners).
@@ -4693,6 +4813,8 @@ func _fill_region(req : Dictionary) -> Dictionary:
 	rate = clamp(rate, 0.0, 1.0)
 	var sp = _open_splat(level, slot)
 	if sp == null: return _err("could not read splat image for slot " + str(slot))
+	var unbound = _slot_unbound(level, slot)
+	if unbound != null: return unbound
 	var img = sp.img
 	var iw = img.get_width()
 	var ih = img.get_height()
@@ -4704,15 +4826,15 @@ func _fill_region(req : Dictionary) -> Dictionary:
 	var y_to = int(min(ih, oy + bh))
 	var x_from = int(max(0, ox))
 	var x_to = int(min(iw, ox + bw))
-	img.lock()
+	_splat_lock(sp)
 	for iy in range(y_from, y_to):
 		for ix in range(x_from, x_to):
 			if not _point_in_poly(Vector2(ix - ox + 0.5, iy - oy + 0.5), local):
 				continue
-			img.set_pixel(ix, iy, _splat_set_channel(img.get_pixel(ix, iy), sp.ch, rate))
+			_splat_paint(sp, ix, iy, rate)
 			painted += 1
-	img.unlock()
-	_close_splat(level, sp.which, img)
+	_splat_unlock(sp)
+	_close_splat(level, sp)
 
 	return _ok({
 		"filled_slot": slot, "shape": ("rect" if req.has("rect") else "polygon"),
@@ -4721,24 +4843,77 @@ func _fill_region(req : Dictionary) -> Dictionary:
 	})
 
 func _open_splat(level, slot : int):
-	var which = 0 if slot < 4 else 1
+	if slot >= 4:
+		_expand_for_slot(level, slot)
+	var img = level.Terrain.CloneSplatImage()
+	if not _usable_splat(img):
+		return null
+	var img2 = _clone_splat2(level)
+	if slot >= 4 and not _usable_splat(img2):
+		return null
+	if img2 != null and img2.get_size() != img.get_size():
+		return null
+	return { "img": img, "img2": img2, "slot": slot }
 
-	if which == 1 and level.Terrain.has_method("ExpandSlots"):
+func _usable_splat(img) -> bool:
+	return img != null and img.get_width() > 0 and img.get_height() > 0
+
+# Painting a slot 4-7 that has no texture changes weights nobody can see:
+# expansion leaves texture_5..8 unbound until set_terrain_slot assigns one.
+func _slot_unbound(level, slot : int):
+	if slot < 4 or not level.Terrain.has_method("GetTexture"):
+		return null
+	if level.Terrain.GetTexture(slot) != null:
+		return null
+	return _err(("terrain slot %d has no texture yet. Assign one with " +
+		"set_terrain_slot(slot=%d, asset=...) or pass asset= with this call.") % [slot, slot])
+
+func _expand_for_slot(level, slot : int) -> void:
+	if slot < 4 or level == null or level.Terrain == null:
+		return
+	if level.Terrain.has_method("get_ExpandedSlots") and level.Terrain.get_ExpandedSlots():
+		return
+	if level.Terrain.has_method("ExpandSlots"):
 		level.Terrain.ExpandSlots(true)
-	var img = level.Terrain.CloneSplatImage() if which == 0 else level.Terrain.CloneSplatImage2()
-	if img == null:
-		return null
 
-	if img.get_width() <= 0 or img.get_height() <= 0:
-		return null
-	return { "img": img, "ch": slot % 4, "which": which }
+func _splat_lock(sp) -> void:
+	sp.img.lock()
+	if sp.img2 != null:
+		sp.img2.lock()
 
-func _close_splat(level, which : int, img) -> void:
-	if which == 0:
-		level.Terrain.RestoreSplat(img)
+func _splat_unlock(sp) -> void:
+	sp.img.unlock()
+	if sp.img2 != null:
+		sp.img2.unlock()
+
+func _splat_paint(sp, ix : int, iy : int, rate : float) -> void:
+	if sp.img2 == null:
+		sp.img.set_pixel(ix, iy, _splat_set_channel(sp.img.get_pixel(ix, iy), sp.slot, rate))
+		return
+	var a = sp.img.get_pixel(ix, iy)
+	var b = sp.img2.get_pixel(ix, iy)
+	var w = [a.r, a.g, a.b, a.a, b.r, b.g, b.b, b.a]
+	var target = w[sp.slot] + (1.0 - w[sp.slot]) * rate
+	var others = 0.0
+	for i in range(8):
+		if i != sp.slot:
+			others += w[i]
+	for i in range(8):
+		if i == sp.slot:
+			w[i] = target
+		elif others > 0.0001:
+			w[i] = w[i] / others * (1.0 - target)
+		else:
+			w[i] = 0.0
+	sp.img.set_pixel(ix, iy, Color(w[0], w[1], w[2], w[3]))
+	sp.img2.set_pixel(ix, iy, Color(w[4], w[5], w[6], w[7]))
+
+func _close_splat(level, sp) -> void:
+	if sp.img2 == null:
+		level.Terrain.RestoreSplat(sp.img)
 	else:
 
-		level.Terrain.RestoreSplat2(level.Terrain.CloneSplatImage(), img)
+		level.Terrain.RestoreSplat2(sp.img, sp.img2)
 	level.Terrain.UpdateSplat()
 
 # Push channel `ch` (0=R,1=G,2=B,3=A) of an RGBA splat weight toward 1 by `rate`,
@@ -5858,6 +6033,7 @@ func _mask_fraction(tex) -> float:
 	var th = img.get_height()
 	if tw < 2 or th < 2:
 		return -1.0
+	var rule = _pack_mask_rule(str(tex.resource_path))
 	img.lock()
 	var steps := 24
 	var opaque := 0
@@ -5871,16 +6047,60 @@ func _mask_fraction(tex) -> float:
 				continue
 			opaque += 1
 
-			if col.g <= 0.004 and col.b <= 0.004 and col.r > 0.02:
+			if col.g <= 0.004 and col.b <= 0.004 and col.r >= MASK_VISIBLE_RED \
+					and (rule.empty() or _passes_mask_rule(col, rule)):
 				masked += 1
 	img.unlock()
 	if opaque == 0:
 		return 0.0
 	return float(masked) / float(opaque)
 
+func _passes_mask_rule(col : Color, rule : Dictionary) -> bool:
+	if abs(col.g - col.b) > rule["red_tolerance"]:
+		return false
+	if 1.0 - (col.g + col.b) * 0.5 < rule["min_saturation"]:
+		return false
+	return col.r - (col.g + col.b) * 0.5 > rule["min_redness"]
+
+# The overriding mask rule of the pack a texture comes from, or {} when the
+# texture is not from a pack or the pack keeps Dungeondraft's defaults.
+func _pack_mask_rule(path : String) -> Dictionary:
+	if not path.begins_with(PACKS_DIR + "/"):
+		return {}
+	var pack_id = path.substr(PACKS_DIR.length() + 1).split("/")[0]
+	if _pack_mask_rules.has(pack_id):
+		return _pack_mask_rules[pack_id]
+	var rule := {}
+	var overrides = _read_pack_manifest(pack_id).get("custom_color_overrides")
+	if typeof(overrides) == TYPE_DICTIONARY and bool(overrides.get("enabled", false)):
+		rule = {
+			"min_redness": float(overrides.get("min_redness", 0.1)),
+			"red_tolerance": float(overrides.get("red_tolerance", 0.04)),
+			"min_saturation": float(overrides.get("min_saturation", 0.0)),
+		}
+	_pack_mask_rules[pack_id] = rule
+	return rule
+
 func _asset_tex(category : String, asset):
-	if typeof(asset) != TYPE_STRING or asset == "":
+	if not _asset_listed(category, asset):
 		return null
+	var tex = Script.GetAssetTexture(category, asset)
+	if tex == null:
+
+		tex = Script.GetAssetTexture(category, asset)
+	return tex
+
+func _objects_asset_problem(asset : String) -> String:
+	if not _asset_listed("Objects", asset):
+		return "is not an Objects asset"
+	if _asset_tex("Objects", asset) == null:
+		return ("is listed as an Objects asset, but Dungeondraft returned no " +
+			"texture for it (twice)")
+	return ""
+
+func _asset_listed(category : String, asset) -> bool:
+	if typeof(asset) != TYPE_STRING or asset == "":
+		return false
 	# GetAssetList is cached per category, but opening a map re-scopes the
 	# library while the packs themselves stay mounted. Without this, the cache
 	# keeps offering assets the newly opened map cannot keep.
@@ -5891,16 +6111,14 @@ func _asset_tex(category : String, asset):
 	if not _asset_index.has(category):
 
 		if not (category in ASSET_CATEGORIES):
-			return null
+			return false
 		var known := {}
 		var all = Script.GetAssetList(category)
 		if all != null:
 			for path in all:
 				known[str(path)] = true
 		_asset_index[category] = known
-	if not _asset_index[category].has(asset):
-		return null
-	return Script.GetAssetTexture(category, asset)
+	return _asset_index[category].has(asset)
 
 func _xy(req : Dictionary, fallback : Vector2) -> Vector2:
 	if req.has("x") and req.has("y"):

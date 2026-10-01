@@ -189,3 +189,27 @@ def test_too_many_searches_reaches_the_model_as_an_error(bridge):
     )
     assert result.is_error
     assert str(server.MAX_SEARCHES) in result.content[0].text
+
+
+@pytest.mark.parametrize("raised", [OSError(), OSError("disk vanished"), KeyError("path")])
+def test_an_unexpected_exception_names_its_type(monkeypatch, raised):
+    def boom(cmd, **params):
+        raise raised
+
+    monkeypatch.setattr(server.bridge, "request", boom)
+    result = _call("screenshot", {})
+
+    assert result.is_error
+    text = result.content[0].text
+    assert f"{type(raised).__name__}:" in text
+    assert "screenshot failed unexpectedly" in text
+
+
+def test_an_unexpected_exception_message_is_kept_short(monkeypatch):
+    def boom(cmd, **params):
+        raise RuntimeError("x" * 5000)
+
+    monkeypatch.setattr(server.bridge, "request", boom)
+    text = _call("get_status", {}).content[0].text
+    assert "RuntimeError" in text
+    assert len(text) < 800

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from battlemap_mcp import server
+from battlemap_mcp.errors import ValidationError
 
 
 def test_package_imports_without_a_bridge():
@@ -303,7 +304,6 @@ def test_list_assets_ranked_miss_explains_itself_without_a_second_call(monkeypat
 
 def test_list_assets_rejects_an_unknown_match_mode():
     from battlemap_mcp import server
-    from battlemap_mcp.errors import ValidationError
 
     with pytest.raises(ValidationError):
         server.list_assets(search="door", match_mode="semantic")
@@ -311,7 +311,6 @@ def test_list_assets_rejects_an_unknown_match_mode():
 
 def test_list_assets_rejects_an_out_of_range_min_score():
     from battlemap_mcp import server
-    from battlemap_mcp.errors import ValidationError
 
     with pytest.raises(ValidationError):
         server.list_assets(search="door", match_mode="fuzzy", min_score=1.4)
@@ -744,3 +743,11 @@ def test_colourability_survives_the_bridge_reporting_it_as_indices(monkeypatch):
     ]
     assert server._colorable_paths({"assets": assets, "colorable": [9]}) == []
     assert server._colorable_paths({"assets": assets}) == []
+
+
+@pytest.mark.parametrize("slot", [4, 7])
+def test_terrain_slots_4_to_7_reach_the_bridge(monkeypatch, slot):
+    sent = {}
+    monkeypatch.setattr(server.bridge, "request", lambda cmd, **params: sent.update(params) or {})
+    server.paint_terrain(slot=slot, x=0, y=0)
+    assert sent["slot"] == slot

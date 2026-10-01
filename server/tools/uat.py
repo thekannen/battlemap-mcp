@@ -486,14 +486,24 @@ def terrain(u: Uat) -> None:
     u.check("terrain slots map to channels 0-3", channels, needs_dirty=True)
 
     def high_slots():
-        u.c.request("set_terrain_slot", asset=terr, slot=4)
-        r = u.c.request(
-            "paint_terrain", slot=4, x=u.cx - 1500, y=u.cy - 1500, radius=200.0, rate=1.0
-        )
+        x, y = u.cx - 1500, u.cy - 1500
+        u.c.request("set_terrain_slot", asset=terr, slot=5)
+        r = u.c.request("paint_terrain", slot=5, x=x, y=y, radius=300.0, rate=1.0)
         assert r["pixels"] > 0, f"nothing painted: {r}"
-        return f"slot 4 painted {r['pixels']} px (second splat image)"
+        state = u.c.request("get_terrain", samples=2, render=True, at=[x, y])["render"]
+        material = state["material"]
+        assert state.get("expanded_slots") is True, f"level not expanded: {state}"
+        assert material["shader"].endswith("Terrain2.shader"), f"4-slot shader: {material}"
+        assert (material["params"].get("texture_6") or {}).get("path") == terr, (
+            f"slot 5 texture not bound: {material['params'].get('texture_6')}"
+        )
+        cpu1, cpu2 = state["cpu_splat"], state["cpu_splat2"]
+        assert cpu2[1] > 0.9 and sum(cpu1) < 0.1, f"weights not one blend: {cpu1} {cpu2}"
+        gpu2 = material["params"]["splat2"]["at_pixel"]
+        assert abs(gpu2[1] - cpu2[1]) < 0.02, f"GPU splat2 {gpu2} != CPU {cpu2}"
+        return f"slot 5 renders: Terrain2, texture bound, weights {cpu1} + {cpu2}"
 
-    u.check("terrain slots 4-7 work (second splat image)", high_slots, needs_dirty=True)
+    u.check("terrain slots 4-7 render (second splat image)", high_slots, needs_dirty=True)
 
     def rate_blend():
         x, y = u.cx - 2200, u.cy + 1800

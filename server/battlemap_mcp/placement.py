@@ -202,6 +202,46 @@ def _is_wall_cap(element: dict, box: Box, junctions: list[tuple[float, float]]) 
     return any(box.distance_to(x, y) == 0.0 for x, y in junctions)
 
 
+WALL_MOUNTED_NAMES = (
+    "wall_",
+    "sconce",
+    "torch",
+    "tapestry",
+    "banner",
+    "painting",
+    "portrait",
+    "mirror",
+    "curtain",
+    "hanging",
+    "chimney",
+)
+
+# How far past a wall's centre line a mounted fixture may reach on the far
+# side. A wall has thickness and a frame has depth; a hearth pushed clean
+# through the wall reaches far beyond this and still counts as crossing.
+WALL_MOUNT_DEPTH = 64.0
+
+
+def _is_wall_mounted(asset: str) -> bool:
+    name = asset.rsplit("/", 1)[-1].lower()
+    return any(word in name for word in WALL_MOUNTED_NAMES)
+
+
+def _mounting(box: Box, segment: Segment) -> tuple[float, bool]:
+    """How far the box reaches past the wall on its smaller side, and whether
+    its front (rotation 0 faces down, +y) points to its larger side."""
+    dx, dy = segment.x1 - segment.x0, segment.y1 - segment.y0
+    length = math.hypot(dx, dy)
+    nx, ny = -dy / length, dx / length
+    across = [(cx - segment.x0) * nx + (cy - segment.y0) * ny for cx, cy in box.corners()]
+    room_side = 1.0 if max(across) >= -min(across) else -1.0
+    far_depth = -min(across) if room_side > 0 else max(across)
+    theta = math.radians(box.rotation_deg)
+    forward_x, forward_y = -math.sin(theta), math.cos(theta)
+    faces_room = (forward_x * nx + forward_y * ny) * room_side > 0.0
+    return far_depth, faces_room
+
+
 def find_intrusions(
     objects: list[dict],
     walls: list[dict],
@@ -215,6 +255,7 @@ def find_intrusions(
     junctions = _wall_vertices(walls)
     crossing: list[dict] = []
     caps: list[dict] = []
+    mounted: list[dict] = []
     blocking: list[dict] = []
     unmeasurable: list[dict] = []
 
@@ -226,9 +267,8 @@ def find_intrusions(
             unmeasurable.append({"id": element_id, "asset": asset})
             continue
 
-        hit_walls = sorted(
-            {segment.wall_id for segment in segments if _straddles(box, segment, tolerance)}
-        )
+        hit = [segment for segment in segments if _straddles(box, segment, tolerance)]
+        hit_walls = sorted({segment.wall_id for segment in hit})
         if hit_walls:
             finding = {
                 "id": element_id,
@@ -239,8 +279,13 @@ def find_intrusions(
                 "bounds": box.bounds(),
                 "wall_ids": hit_walls,
             }
+            mounting = [_mounting(box, segment) for segment in hit]
+            far_depth = max(depth for depth, _ in mounting)
             if _is_wall_cap(element, box, junctions):
                 caps.append(finding)
+            elif _is_wall_mounted(asset) and far_depth <= WALL_MOUNT_DEPTH:
+                finding["faces_room"] = all(faces for _, faces in mounting)
+                mounted.append(finding)
             else:
                 crossing.append(finding)
 
@@ -268,6 +313,7 @@ def find_intrusions(
         "tolerance_woxels": tolerance,
         "crossing_walls": crossing,
         "wall_caps": caps,
+        "wall_mounted": mounted,
         "blocking_portals": blocking,
         "unmeasurable": unmeasurable,
         "ok": not crossing and not blocking,

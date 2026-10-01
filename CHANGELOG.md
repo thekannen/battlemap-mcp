@@ -4,6 +4,42 @@ What changed in each release, written for the people using it. Versions cover
 the companion, the Dungeondraft mod and the map-making skills together; the
 wire protocol between them is versioned separately and is currently 25.
 
+## 1.1.1 — 2026-10-01
+
+Fixes for colours, terrain, the map checks and a few unhelpful error messages.
+
+**All eight terrain slots paint.** Terrain slots 5 to 8 (numbered 4 to 7 by
+your assistant) accepted paint but showed nothing, even after the map was
+reopened. They now paint, blend with the other slots, save and undo like the
+first four. Your assistant gives a slot a texture before painting it.
+
+**Floor tiles keep their own colours.** A tiled floor placed without a colour
+was always tinted brown, which turned green marble almost black and sandstone
+orange. Tiles with colours of their own now show them; plain grey tiles still
+get the neutral brown.
+
+**Fewer false "this will be red" warnings.** Many Forgotten Adventures assets
+were called colourable and said to render flat red, while a colour had no
+visible effect on them. Your assistant now uses Dungeondraft's own rule for
+which parts take a colour, including each asset pack's own settings. It
+warns about flat red only when most of an asset is colourable, and mentions
+smaller red parts separately.
+
+**Quieter map checks.** Paintings, wall lanterns, curtains and similar
+fixtures hung on a wall are listed as wall-mounted instead of as objects
+crossing the wall. Lights on candelabras, and on anything from a pack's light
+sources folder, count as having a source.
+
+**Clearer messages.** When something unexpected goes wrong in a tool, such as
+a screenshot or an export, you're told what failed instead of getting an
+empty error. When the companion and the Dungeondraft mod don't share a
+connection key, typically because an older or development copy of the mod is
+installed, the error and the connection check say so and point to the newer
+key, instead of asking you to start Dungeondraft. Window and door frames that
+draw almost nothing on their own come with a note to add the matching window
+or door. An asset whose image fails to load is no longer called "not an
+object".
+
 ## 1.1.0 — 2026-09-25
 
 Your assistant now works with two popular Dungeondraft mods, the Custom Snap

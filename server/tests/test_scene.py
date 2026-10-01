@@ -183,6 +183,27 @@ def test_real_non_sources_are_not(name):
     assert not is_emitter(f"res://textures/objects/x/{name}")
 
 
+FA_LIGHTS = "res://packs/FA35OB01/textures/objects/Lightsources"
+
+
+@pytest.mark.parametrize(
+    "asset",
+    [
+        f"{FA_LIGHTS}/Candelabras/Candelabra_Metal_Gray_A_1x1.webp",
+        f"{FA_LIGHTS}/Candelabras/Candelabra_Wood_Dark_A_1x1.webp",
+        "res://textures/objects/x/candelabrum_02.png",
+        # The folder credits a name no stem anticipates.
+        f"{FA_LIGHTS}/Oil_Vessels/Oil_Vessel_Clay_A_1x1.webp",
+    ],
+)
+def test_fa_light_sources_are_recognised(asset):
+    assert is_emitter(asset)
+
+
+def test_the_folder_does_not_credit_a_part():
+    assert not is_emitter(f"{FA_LIGHTS}/Fireplaces/Firewood_Pile_A_1x1.webp")
+
+
 # --- lights -----------------------------------------------------------------
 
 

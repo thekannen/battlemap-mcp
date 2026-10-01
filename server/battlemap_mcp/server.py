@@ -16,6 +16,7 @@ import functools
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import time
@@ -27,6 +28,8 @@ from uuid import uuid4
 
 import pydantic_core
 from mcp.server.mcpserver import Image, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.shared.exceptions import MCPError
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic import ValidationError as PydanticValidationError
 
@@ -34,7 +37,7 @@ from . import arrangement, installer, lifecycle, snapping, timing, updates, user
 from .asset_packs import build_manifest, prepare_map_file, unknown_ids
 from .asset_search import DEFAULT_MIN_SCORE, MATCH_MODES, rank_assets
 from .bridge_client import BridgeClient, BridgeUnavailableError, _state_file
-from .errors import BridgeProtocolError, ValidationError
+from .errors import BridgeProtocolError, DungeondraftMCPError, ValidationError
 from .floorplan import WOXELS_PER_TILE, analyse
 from .placement import (
     DEFAULT_TOLERANCE,
@@ -115,6 +118,8 @@ tell them, and make no edits until they resume.
 mcp = MCPServer("battlemap", instructions=INSTRUCTIONS)
 bridge = BridgeClient(HOST, PORT)
 
+_log = logging.getLogger(__name__)
+
 _Tool = TypeVar("_Tool", bound=Callable[..., Any])
 
 
@@ -144,6 +149,22 @@ def _result_size(row: dict, sent: Any) -> None:
         row["result_image_bytes"] = image_bytes
 
 
+_UNEXPECTED_DETAIL_CHARS = 300
+
+
+def _unexpected(name: str, exc: Exception) -> DungeondraftMCPError:
+    """A ToolError naming an exception this package did not anticipate."""
+    _log.error("%s raised %s", name, type(exc).__name__, exc_info=exc)
+    detail = str(exc).strip() or "no message"
+    if len(detail) > _UNEXPECTED_DETAIL_CHARS:
+        detail = detail[:_UNEXPECTED_DETAIL_CHARS] + "..."
+    return DungeondraftMCPError(
+        f"{name} failed unexpectedly: {type(exc).__name__}: {detail}. "
+        "This is a bug in the companion, not in your request; retrying the same call "
+        "is unlikely to help. Restarting the MCP client restarts the companion."
+    )
+
+
 def tool() -> Callable[[_Tool], _Tool]:
     """Register a tool, returning the function itself unchanged.
 
@@ -157,7 +178,12 @@ def tool() -> Callable[[_Tool], _Tool]:
         @functools.wraps(fn)
         def for_the_model(*args: Any, **kwargs: Any) -> Any:
             with timing.tool_call(fn.__name__) as row:
-                sent = _model_text(fn(*args, **kwargs))
+                try:
+                    sent = _model_text(fn(*args, **kwargs))
+                except (ToolError, MCPError):
+                    raise
+                except Exception as exc:
+                    raise _unexpected(fn.__name__, exc) from exc
                 if row:
                     _result_size(row, sent)
                 return sent
@@ -967,8 +993,8 @@ def list_assets(
     assets, a full library over a hundred thousand. If a search comes up thin,
     check list_asset_packs before concluding an asset does not exist.
 
-    `colorable` lists INDEXES into `assets` of assets with an unpainted colour
-    mask. They render flat RED unless you pass `color` at placement, and colour
+    `colorable` lists INDEXES into `assets` of assets with a colour mask: they
+    take `color` at placement, and the mask shows red without one. Colour
     cannot be changed afterwards — check before choosing. `colorable_scanned`
     false means the result was too large to scan: narrow the search.
 
@@ -1302,10 +1328,11 @@ def validate_placements(tolerance_woxels: float = DEFAULT_TOLERANCE) -> dict:
       wall_caps         posts, pillars and beams on layer 700+ set over a
                         wall, or anything there covering a wall join: the caps
                         the skills ask for. Advice; never changes `ok`.
+      wall_mounted      paintings, wall lanterns, curtains and the like on the
+                        wall they hang from; faces_room false = turned around.
       blocking_portals  an object standing in a doorway or across a window.
-      unmeasurable      objects the bridge returned no texture_size for, so
-                        nothing could be checked. Not the same as clean; if
-                        this is non-empty the map is only partly validated.
+      unmeasurable      objects with no texture_size, so not checked. Not the
+                        same as clean: the map is only partly validated.
       stacked           two LARGE objects in one place on one layer — crates
                         inside crates, a tent through a wagon. Deliberate pairs
                         land here too (a spit over a fire), so look before
@@ -1314,12 +1341,10 @@ def validate_placements(tolerance_woxels: float = DEFAULT_TOLERANCE) -> dict:
                         from any wall. Matched by asset name, so read the
                         reported distance and decide.
 
-    Dressing a surface is NOT reported: a tankard on a table sits on a higher
-    layer than the table, which is how `stacked` tells the two apart.
+    A tankard on a table is NOT reported: it is on a higher layer.
 
-    Footprints are rotation-aware (`fit_elements` bounds are not). A finding
-    is evidence, not a verdict: a hearth set INTO a thick wall is deliberate
-    and will be reported.
+    Footprints are rotation-aware. A finding is evidence, not a verdict: a
+    hearth set INTO a thick wall is deliberate and will be reported.
 
     tolerance_woxels: how far past a wall's centre line an object may reach on
       both sides before it counts as crossing. The default (24) keeps flush
@@ -1599,9 +1624,10 @@ def place_object(
     """Place an object (prop) on the current map. Returns the new element id.
 
     If you place a colourable asset WITHOUT a colour, the response comes back
-    with `colorable: true` and says so: the object is on the map as a flat red
-    shape. Colour is baked at placement, so the fix is to delete it and place
-    it again with `color`.
+    with `colorable: true` and `mask_fraction`, and its note says whether the
+    object is a flat red shape or just has red accents.
+    Colour is baked at placement, so the fix is to delete it and place it
+    again with `color`.
 
     asset: an Objects asset path from list_assets(category='Objects').
     x, y: woxel coordinates; defaults to map center. rotation: degrees.
@@ -2023,7 +2049,24 @@ def add_portal(
         params["x"] = x
     if y is not None:
         params["y"] = y
-    return _with_snap(bridge.request("add_portal", **params), snap_info)
+    result = _with_snap(bridge.request("add_portal", **params), snap_info)
+    frame_note = _frame_only_portal_note(asset)
+    if frame_note and isinstance(result, dict):
+        result["warning"] = frame_note
+    return result
+
+
+_FRAME_ONLY_PORTAL = re.compile(r"(?i)/window_frames/|[/_]door_frame")
+
+
+def _frame_only_portal_note(asset: str) -> str:
+    if not _FRAME_ONLY_PORTAL.search(asset):
+        return ""
+    return (
+        "this is a frame-only portal asset: on its own it renders as a near-empty "
+        "gap in the wall. Pair it with the matching leaf (a Window_Sill_* glass "
+        "pane, or a door) placed at the same spot, or pick a complete window or door."
+    )
 
 
 @tool()
@@ -2099,8 +2142,9 @@ def place_pattern(
     asset: a pattern asset path from list_assets(category=...).
     category: which asset bank — 'Patterns', 'Patterns Colorable', 'Materials',
       'Simple Tiles', or 'Smart Tiles'.
-    color: '#rrggbb' tint. Omit to use the tileset's own default tint (wood is
-      brown, etc.) instead of white — match the UI by leaving it unset.
+    color: '#rrggbb' tint. Omit it and a greyscale texture gets a neutral
+      brown, while one with its own colours (marble, painted tile) is left
+      untinted; the reply's texture_greyscale says which.
     rotation: pattern rotation in degrees.
     z: persistent layer VALUE, a multiple of 100 from -500 to 900.
       Default -100 sits below objects. Arbitrary z offsets cannot survive saving.
@@ -2727,7 +2771,9 @@ def get_terrain(rect: list[float] | None = None, samples: int = 16) -> dict:
     paint_terrain(slot=0) is accepted by the engine but never raises slot 0's
     weight; fill_terrain(slot=0) replaces the base instead.
 
-    Slots 4-7 exist in a second splat image and are NOT reported here.
+    Slots 4-7 live in a second splat image, reported as weights2. All eight
+    weights are one blend: painting any slot takes weight from the other
+    seven. A slot 4-7 needs a texture (set_terrain_slot) before it is painted.
 
     This is the only way to check terrain without a screenshot — use it to
     confirm a fill or paint landed where you meant, and to see what ground you
