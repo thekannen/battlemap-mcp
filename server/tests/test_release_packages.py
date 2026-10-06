@@ -359,7 +359,10 @@ def launcher_checkout(tmp_path, **changes):
         ROOT / "packaging/build-requirements.txt",
         tmp_path / "packaging/build-requirements.txt",
     )
+    # Start from an empty pin, whatever the checkout holds: production's is
+    # filled in, and a record missing half of a real pin must still fail.
     pin = json.loads((ROOT / "packaging/windows-launcher.json").read_text())
+    pin.update(sha256=None, url=None)
     pin.update(changes)
     (tmp_path / "packaging/windows-launcher.json").write_text(json.dumps(pin))
     return tmp_path
