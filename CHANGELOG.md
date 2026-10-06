@@ -4,7 +4,7 @@ What changed in each release, written for the people using it. Versions cover
 the companion, the Dungeondraft mod and the map-making skills together; the
 wire protocol between them is versioned separately and is currently 25.
 
-## 1.2.0 — 2026-10-05
+## 1.2.0 — 2026-10-06
 
 Install it from Claude, let your assistant search inside every asset pack you
 own, and export maps without the grid.
