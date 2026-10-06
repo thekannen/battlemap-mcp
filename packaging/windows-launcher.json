@@ -3,6 +3,6 @@
   "generation": 1,
   "pyinstaller": "6.16.0",
   "build_timestamp": 1790000000,
-  "sha256": null,
-  "url": null
+  "sha256": "2f671e514398fe98eb07c660b6c79bd3820aa614d76a7111a1547d67590f18ea",
+  "url": "https://github.com/thekannen/battlemap-mcp/releases/download/windows-launcher-1/battlemap-mcp.exe"
 }
