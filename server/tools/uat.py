@@ -2800,6 +2800,69 @@ def asset_search(u: Uat) -> None:
     u.check("assets: colourability is reported as indices", colourability_is_reported_as_indices)
 
 
+@group("packs_and_exports")
+def packs_and_exports(u: Uat) -> None:
+    """Gridless export, opaque bounds, and previews from packs a map lacks."""
+    import importlib
+
+    from PIL import Image, ImageChops
+
+    server = importlib.import_module("battlemap_mcp.server")
+
+    def gridless_export():
+        before = u.c.request("get_map_style")["grid_visible"]
+        paths = {}
+        for grid in (True, False):
+            _, caption = server.export_map(ppi=12, format="png", grid=grid)
+            paths[grid] = caption.split("saved: ", 1)[1].split("\n", 1)[0]
+        after = u.c.request("get_map_style")["grid_visible"]
+        assert after == before, f"grid_visible {before} became {after}"
+        with Image.open(paths[True]) as on, Image.open(paths[False]) as off:
+            diff = ImageChops.difference(on.convert("RGB"), off.convert("RGB"))
+            changed = sum(1 for px in diff.convert("L").tobytes() if px > 8)
+        assert changed > 0, "grid=False rendered the same image as grid=True"
+        return f"{changed} px differ; editor grid still {after}"
+
+    u.check("export: grid=False leaves the grid out and restores it", gridless_export)
+
+    def opaque_bounds():
+        listed = u.c.request("list_elements", kind="objects", limit=5)["elements"]
+        if not listed:
+            listed = [u.c.request("place_object", asset=u.asset("Objects"), x=u.cx, y=u.cy)]
+        element = server.get_element(int(listed[0]["id"]))
+        outer, inner = element["bounds"], element["opaque_bounds"]
+        assert outer[0] <= inner[0] + 1 and outer[1] <= inner[1] + 1, (outer, inner)
+        assert inner[2] <= outer[2] + 1 and inner[3] <= outer[3] + 1, (outer, inner)
+        return f"bounds {outer}, opaque {inner}"
+
+    u.check("elements: opaque_bounds lie inside bounds", opaque_bounds)
+
+    def preview_unincluded_pack():
+        packs = u.c.request("list_asset_packs")["installed_but_not_in_this_map"]
+        if not packs:
+            return "skipped: every installed pack is in this map"
+        for pack in packs:
+            found = server.search_pack_contents(searches=["a"], packs=[pack["id"]], limit=2)
+            paths = [p for ps in found["results"]["a"]["best"].values() for p in ps]
+            if paths:
+                break
+        else:
+            return "skipped: no searchable Objects in the unincluded packs"
+        sheet = u.c.request(
+            "preview_assets", category="Objects", assets=paths, name="uat_pack_preview.png"
+        )
+        assert sheet["missing"] == [], sheet["missing"]
+        try:
+            u.c.request("place_object", asset=paths[0], x=u.cx, y=u.cy)
+        except Exception as exc:
+            assert "does not include" in str(exc), exc
+        else:
+            raise AssertionError(f"placed {paths[0]} from a pack the map lacks")
+        return f"previewed {len(paths)} from {pack['id']}; placement refused"
+
+    u.check("assets: a pack the map lacks previews but does not place", preview_unincluded_pack)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="UAT against a live Dungeondraft map")
     parser.add_argument(

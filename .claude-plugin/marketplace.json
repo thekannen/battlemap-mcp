@@ -1,5 +1,6 @@
 {
   "name": "battlemap-mcp",
+  "description": "battlemap-mcp: build battle maps in a running Dungeondraft.",
   "owner": {
     "name": "thekannen",
     "url": "https://github.com/thekannen/battlemap-mcp"
@@ -8,7 +9,7 @@
     {
       "name": "battlemap-mcp",
       "source": "./",
-      "description": "Drive a running Dungeondraft instance over a localhost bridge: walls, floors, terrain, lighting and props, plus skills for art direction, composition and structural review. Requires Dungeondraft with the bundled bridge mod installed."
+      "description": "Build battle maps in a running Dungeondraft: the map tools (walls, floors, terrain, lighting, objects, screenshots) plus skills for art direction, composition and review. Needs Dungeondraft 1.2.0.1 and the bridge mod, which your assistant can install. Use instead of the companion download, not with it."
     }
   ]
 }

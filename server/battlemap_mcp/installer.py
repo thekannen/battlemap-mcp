@@ -238,8 +238,8 @@ def dungeondraft_data_dir(
     return home / ".local" / "share" / "Dungeondraft"
 
 
-def configured_mods_dir(config_path: Path) -> Path | None:
-    """The mods folder Dungeondraft is set to load, read from its own config.ini.
+def _config_value(config_path: Path, section: str, key: str) -> str | None:
+    """One raw value from Dungeondraft's config.ini, or None.
 
     The file is Godot's ConfigFile format: values are Godot literals, and other
     sections hold multi-line dictionaries that configparser rejects outright,
@@ -249,19 +249,38 @@ def configured_mods_dir(config_path: Path) -> Path | None:
         text = config_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
-    section = ""
+    current = ""
     for raw in text.splitlines():
         line = raw.strip()
         if line.startswith("[") and line.endswith("]") and "=" not in line:
-            section = line[1:-1].strip()
+            current = line[1:-1].strip()
             continue
-        if section != "Mods":
+        if current != section:
             continue
-        match = re.match(r'mods_directory\s*=\s*"((?:[^"\\]|\\.)*)"\s*$', line)
+        match = re.match(rf"{re.escape(key)}\s*=\s*(.*)$", line)
         if match:
-            value = re.sub(r"\\(.)", r"\1", match.group(1)).strip()
-            return Path(value) if value else None
+            return match.group(1).strip()
     return None
+
+
+def _godot_strings(literal: str) -> list[str]:
+    """Every quoted string in a Godot literal, unescaped, in order."""
+    return [re.sub(r"\\(.)", r"\1", value) for value in re.findall(r'"((?:[^"\\]|\\.)*)"', literal)]
+
+
+def config_path_value(config_path: Path, section: str, key: str) -> Path | None:
+    """A folder Dungeondraft records as a quoted string, or None when unset."""
+    literal = _config_value(config_path, section, key)
+    if literal is None or not re.fullmatch(r'"(?:[^"\\]|\\.)*"', literal):
+        return None
+    (value,) = _godot_strings(literal)
+    value = value.strip()
+    return Path(value) if value else None
+
+
+def configured_mods_dir(config_path: Path) -> Path | None:
+    """The mods folder Dungeondraft is set to load, read from its own config.ini."""
+    return config_path_value(config_path, "Mods", "mods_directory")
 
 
 def candidate_mods_dirs(
@@ -315,6 +334,11 @@ def codex_skills_dir() -> Path:
     """Return Codex's user-scoped skill directory without creating it."""
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
     return codex_home / "skills"
+
+
+def opencode_skills_dir() -> Path:
+    """Return OpenCode's user skills directory without creating it."""
+    return Path.home() / ".config" / "opencode" / "skills"
 
 
 def claude_code_skills_dir() -> Path:
@@ -576,7 +600,7 @@ def doctor(mods_dir: Path, *, state_dir: Path, _payload: Path | None = None) -> 
     if expected is None:
         if current:
             # A copy this installer did not make but that IS this package's
-            # bridge â€” a development checkout linked into the mods folder.
+            # bridge — a development checkout linked into the mods folder.
             return DoctorReport(
                 destination=destination,
                 status="healthy",

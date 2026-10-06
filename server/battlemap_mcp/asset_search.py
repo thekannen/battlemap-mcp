@@ -55,21 +55,42 @@ def _haystack(path: str) -> str:
     return " ".join(_words(path.replace("res://", "")))
 
 
+def searchable_text(path: str, extra: str = "") -> str:
+    """The words a 'tokens' search looks for its terms in: the path's, then extra's.
+
+    Precompute this to prefilter a large catalogue: a path can only match in
+    'tokens' mode if every query word is a substring of it.
+    """
+    haystack = _haystack(path)
+    return f"{haystack} {' '.join(_words(extra))}" if extra else haystack
+
+
+def query_words(query: str) -> list[str]:
+    """The words of a query, split the way paths are."""
+    return _words(query)
+
+
 def _similarity(query: str, candidate: str) -> float:
     return SequenceMatcher(None, query, candidate).ratio()
 
 
-def score_path(path: str, query: str, mode: str) -> AssetMatch | None:
-    """Score one path, or None when it does not qualify under this mode."""
+def score_path(path: str, query: str, mode: str, extra: str = "") -> AssetMatch | None:
+    """Score one path, or None when it does not qualify under this mode.
+
+    extra: more words that describe the asset, such as its pack's tags. They
+    count as hits, but the ranking still compares the query with the filename.
+    """
     terms = _words(query)
     if not terms:
         return AssetMatch(path, 1.0, ())
-    haystack = _haystack(path)
+    haystack = searchable_text(path, extra)
     stem = _stem(path)
     stem_words = _words(stem)
 
     if mode == "substring":
-        return AssetMatch(path, 1.0, (query.lower(),)) if query.lower() in path.lower() else None
+        needle = query.lower()
+        found = needle in path.lower() or needle in extra.lower()
+        return AssetMatch(path, 1.0, (needle,)) if found else None
 
     if mode == "tokens":
         # Every term must appear somewhere in the path, in any order. Rank by

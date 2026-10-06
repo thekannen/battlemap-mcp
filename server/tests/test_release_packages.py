@@ -317,18 +317,24 @@ def test_changelog_ships_to_users():
 
 def test_intel_macs_pin_cryptography_to_a_version_with_wheels():
     release = release_module()
-    assert release.dependency_pins("Darwin", "x86_64") == ["cryptography>=48,<49"]
-    assert release.dependency_pins("Darwin", "arm64") == []
-    assert release.dependency_pins("Windows", "AMD64") == []
-    assert release.dependency_pins("Linux", "x86_64") == []
+    sdk = list(release.MCP_SDK_PINS)
+    assert release.dependency_pins("Darwin", "x86_64") == [*sdk, "cryptography>=48,<49"]
+    assert release.dependency_pins("Darwin", "arm64") == sdk
+    assert release.dependency_pins("Windows", "AMD64") == sdk
+    assert release.dependency_pins("Linux", "x86_64") == sdk
 
 
-def test_windows_version_resource_names_the_release():
-    """An unlabelled executable scores worse with antivirus heuristics."""
-    text = release_module().windows_version_info("1.2.3")
+LAUNCHER = {"generation": 3, "pyinstaller": "6.16.0", "build_timestamp": 1790000000}
+
+
+def test_windows_version_resource_names_the_launcher_not_the_release():
+    """An unlabelled executable scores worse with antivirus heuristics, and the
+    launcher is reused across releases, so the release version must not
+    appear in it: that alone would change its hash every release."""
+    text = release_module().windows_version_info(LAUNCHER)
     compile(text, "version_info.txt", "eval")
-    assert "filevers=(1, 2, 3, 0)" in text
-    assert "StringStruct('ProductVersion', '1.2.3')" in text
+    assert "filevers=(3, 0, 0, 0)" in text
+    assert "StringStruct('ProductVersion', 'launcher 3 (PyInstaller 6.16.0)')" in text
     assert "StringStruct('OriginalFilename', 'battlemap-mcp.exe')" in text
     assert "StringStruct('Comments', " in text
     assert "StringStruct('CompanyName', 'Knownframe')" in text
@@ -336,15 +342,147 @@ def test_windows_version_resource_names_the_release():
 
 def test_windows_build_carries_icon_and_skips_upx(tmp_path):
     release = release_module()
-    args = release.windows_pyinstaller_args(ROOT, tmp_path, "1.2.3")
+    args = release.windows_pyinstaller_args(ROOT, tmp_path, LAUNCHER)
     icon = args[args.index("--icon") + 1]
     assert icon == ROOT / "packaging/icon.ico"
     assert icon.read_bytes()[:4] == b"\x00\x00\x01\x00"  # ICO header
     assert "--noupx" in args
-    assert "filevers=(1, 2, 3, 0)" in args[args.index("--version-file") + 1].read_text()
+    assert "filevers=(3, 0, 0, 0)" in args[args.index("--version-file") + 1].read_text()
     (tmp_path / "packaging").mkdir()
     with pytest.raises(ValueError, match="icon missing"):
-        release.windows_pyinstaller_args(tmp_path, tmp_path, "1.2.3")
+        release.windows_pyinstaller_args(tmp_path, tmp_path, LAUNCHER)
+
+
+def launcher_checkout(tmp_path, **changes):
+    (tmp_path / "packaging").mkdir(exist_ok=True)
+    shutil.copyfile(
+        ROOT / "packaging/build-requirements.txt",
+        tmp_path / "packaging/build-requirements.txt",
+    )
+    pin = json.loads((ROOT / "packaging/windows-launcher.json").read_text())
+    pin.update(changes)
+    (tmp_path / "packaging/windows-launcher.json").write_text(json.dumps(pin))
+    return tmp_path
+
+
+def test_shipped_launcher_pin_is_valid():
+    pin = release_module().load_launcher_pin(ROOT)
+    assert pin["generation"] >= 1
+
+
+def test_launcher_pin_must_match_the_pinned_pyinstaller(tmp_path):
+    """A bootloader runs only its own PyInstaller's .pkg format."""
+    release = release_module()
+    with pytest.raises(ValueError, match="bump the generation"):
+        release.load_launcher_pin(launcher_checkout(tmp_path, pyinstaller="6.0.0"))
+
+
+@pytest.mark.parametrize(
+    "changes, message",
+    [
+        ({"sha256": "a" * 64}, "together"),
+        ({"url": "https://github.com/x/y/releases/download/t/a.exe"}, "together"),
+        (
+            {"sha256": "A" * 64, "url": "https://github.com/x/y/releases/download/t/a.exe"},
+            "lowercase hex",
+        ),
+        ({"sha256": "a" * 64, "url": "https://example.com/a.exe"}, "GitHub release"),
+        ({"generation": 0}, "generation"),
+        ({"build_timestamp": "now"}, "build_timestamp"),
+    ],
+)
+def test_launcher_pin_rejects_malformed_records(tmp_path, changes, message):
+    with pytest.raises(ValueError, match=message):
+        release_module().load_launcher_pin(launcher_checkout(tmp_path, **changes))
+
+
+def test_windows_spec_keeps_the_payload_out_of_the_exe(tmp_path):
+    release = release_module()
+    spec = tmp_path / "a.spec"
+    spec.write_text("exe = EXE(\n    pyz,\n    exclude_binaries=True,\n    name='a',\n)\n")
+    release.windows_spec(spec)
+    text = spec.read_text()
+    assert "    exclude_binaries=True,\n    append_pkg=False,\n" in text
+    compile(text, "a.spec", "exec")
+    spec.write_text("exe = EXE(pyz)\n")
+    with pytest.raises(ValueError, match="exclude_binaries"):
+        release.windows_spec(spec)
+
+
+def windows_bundle(tmp_path, launcher=b"fresh"):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "battlemap-mcp.exe").write_bytes(launcher)
+    (bundle / "battlemap-mcp.pkg").write_bytes(b"payload")
+    return bundle
+
+
+def digest(data):
+    return release_module().hashlib.sha256(data).hexdigest()
+
+
+def test_pinned_launcher_replaces_the_fresh_one(tmp_path):
+    release = release_module()
+    bundle = windows_bundle(tmp_path)
+    pinned = tmp_path / "pinned.exe"
+    pinned.write_bytes(b"pinned")
+    pin = {"sha256": digest(b"pinned"), "url": "https://github.com/x"}
+    release.pin_windows_launcher(
+        bundle, pin, pinned, require=True, candidate_dir=tmp_path / "candidate"
+    )
+    assert (bundle / "battlemap-mcp.exe").read_bytes() == b"pinned"
+    # The fresh build is kept: it is what a new generation is published from.
+    assert (tmp_path / "candidate/battlemap-mcp.exe").read_bytes() == b"fresh"
+    assert digest(b"fresh") in (tmp_path / "candidate/SHA256").read_text()
+
+
+def test_pinned_launcher_with_the_wrong_hash_is_refused(tmp_path):
+    release = release_module()
+    bundle = windows_bundle(tmp_path)
+    tampered = tmp_path / "tampered.exe"
+    tampered.write_bytes(b"tampered")
+    pin = {"sha256": digest(b"pinned"), "url": "https://github.com/x"}
+    with pytest.raises(ValueError, match="hash mismatch"):
+        release.pin_windows_launcher(bundle, pin, tampered)
+    assert (bundle / "battlemap-mcp.exe").read_bytes() == b"fresh"
+
+
+def test_unpinned_launcher_ships_fresh_unless_a_pin_is_required(tmp_path):
+    release = release_module()
+    bundle = windows_bundle(tmp_path)
+    unpinned = {"sha256": None, "url": None}
+    assert release.pin_windows_launcher(bundle, unpinned).startswith("unpinned")
+    with pytest.raises(ValueError, match="requires one"):
+        release.pin_windows_launcher(bundle, unpinned, require=True)
+
+
+def test_windows_bundle_without_its_pkg_is_refused(tmp_path):
+    release = release_module()
+    bundle = windows_bundle(tmp_path)
+    (bundle / "battlemap-mcp.pkg").unlink()
+    with pytest.raises(ValueError, match="pkg"):
+        release.pin_windows_launcher(bundle, {"sha256": None, "url": None})
+
+
+def test_smoke_refuses_a_launcher_that_is_not_the_pinned_one(tmp_path, monkeypatch):
+    """smoke runs again on the extracted archive, so this gates the download."""
+    release = release_module()
+    bundle = windows_bundle(tmp_path, launcher=b"pinned")
+    executable = bundle / "battlemap-mcp.exe"
+    checkout = launcher_checkout(
+        tmp_path,
+        sha256=digest(b"pinned"),
+        url="https://github.com/x/y/releases/download/t/a.exe",
+    )
+    monkeypatch.setattr(release, "ROOT", checkout)
+    release.check_windows_launcher(executable)
+    executable.write_bytes(b"rebuilt")
+    with pytest.raises(ValueError, match="not the pinned"):
+        release.check_windows_launcher(executable)
+    executable.write_bytes(b"pinned")
+    (bundle / "battlemap-mcp.pkg").unlink()
+    with pytest.raises(ValueError, match="missing beside"):
+        release.check_windows_launcher(executable)
 
 
 def test_windows_bootloader_compile_refuses_the_stock_bootloader(tmp_path, monkeypatch):

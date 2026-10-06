@@ -216,6 +216,9 @@ def test_verify_live_covers_every_tool_that_can_be_checked_live():
         # Python-only cleanup, not a bridge command. Do not erase the user's
         # existing captures during live verification; covered with temp files.
         "clear_captures",
+        # Reads pack files from disk; its one bridge read is list_asset_packs,
+        # exercised here. Covered with synthetic packs in test_pack_contents.
+        "search_pack_contents",
     }
     missing = tools - covered - cannot_check
     assert not missing, (

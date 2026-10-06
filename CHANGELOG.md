@@ -4,6 +4,76 @@ What changed in each release, written for the people using it. Versions cover
 the companion, the Dungeondraft mod and the map-making skills together; the
 wire protocol between them is versioned separately and is currently 25.
 
+## 1.2.0 — 2026-10-05
+
+Install it from Claude, let your assistant search inside every asset pack you
+own, and export maps without the grid.
+
+**Install from Claude.** Claude Desktop users can install a single
+`.mcpb` file as an extension; until now, Desktop chat had no way in. In Claude
+Code, the plugin now brings the map tools as well as the map-making skills.
+Update the plugin with `/plugin`, or the extension by opening the new
+version's `.mcpb`. The Dungeondraft mod is still installed separately: ask
+your assistant to install the bridge, then restart Dungeondraft. If a bridge
+is already there, it keeps a backup of the old one. The companion download
+and its Connect files still work as before; use one way, not both, or your
+assistant sees every tool twice.
+
+**Connects on the first try.** The first launch after installing or updating
+could fail to connect in Claude Code, because the companion was still
+starting when Claude Code moved on to a fallback the companion then turned
+down. It now connects on a slow first launch too.
+
+**Search inside your asset packs.** Your assistant can look inside every
+installed asset pack, including the ones the open map doesn't use, and see
+which packs actually have a well, a pergola or hay bales before choosing
+which to add to the map. It reads only each pack's list of files and tags,
+never the art. Packs whose authors ask third-party tools not to read them are
+named but left unsearched.
+
+**Preview a pack before adding it.** Asset previews now work for packs the
+map doesn't include yet, so your assistant can show you candidates before
+adding a pack. Placing from such a pack is still refused until it is added,
+because Dungeondraft would drop it on reopening.
+
+**Export without the grid.** Exports can leave the grid out, the usual choice
+for sharing a map or using it in a VTT that draws its own. Your grid in
+Dungeondraft is put back afterwards.
+
+**Fit things to the art, not the canvas.** Your assistant can now see how
+much of an object's image is actually drawn. Much pack art fills only half its
+canvas, so soil beds, rugs and shadows fitted to it now sit under the plant
+or furniture instead of off to one side.
+
+**More checks on furnished rooms.** The placement check also points out
+dressing that hangs off the table or counter it stands on, one part of a
+multi-piece fixture placed without the rest (bedding without its bed frame, a
+hearth without its chimney), and more wall fixtures standing away from a
+wall. The scene check counts how many assets come from each pack, so a map
+that mixes art styles is easy to spot.
+
+**Better map-making guidance.** The skills now cover keeping a map to one art
+style, placing multi-part fixtures whole, furniture that faces the room and
+sits against its wall, dressing that stays on its surface, a building's
+street and planting, weathered ground and small water, lighting where people
+live and darkness where they don't, and reviewing each room up close before
+moving on.
+
+**OpenCode setup.** A new Connect OpenCode file installs the skills and shows
+the one entry to paste into OpenCode's settings. OpenCode has no command for
+adding a server, and the Connect file never edits your settings itself.
+
+**Update notices name the files.** When a new version is out, your assistant
+gives you direct links to the right companion for your computer, the mod and
+the checksums, or, for a plugin or extension, tells you how to update through
+Claude.
+
+**Windows downloads keep their good standing.** The Windows companion is now
+a small launcher, `battlemap-mcp.exe`, kept the same from release to release,
+with the rest of the program beside it in `battlemap-mcp.pkg`. This way,
+antivirus trust earned by the launcher can carry over to new versions
+instead of starting again each time. Keep the `.pkg` next to the `.exe`.
+
 ## 1.1.1 — 2026-10-01
 
 Fixes for colours, terrain, the map checks and a few unhelpful error messages.

@@ -1,6 +1,6 @@
 # battlemap-mcp
 
-An AI collaborator for your Dungeondraft maps: a local bridge that lets your AI assistant (Codex, Claude Code, or any other MCP client) build, inspect, and refine the map you have open, using assets you already own.
+An AI collaborator for your Dungeondraft maps: a local bridge that lets your AI assistant (Claude Desktop, Claude Code, Codex, OpenCode, or any other MCP client) build, inspect, and refine the map you have open, using assets you already own.
 
 ## Support creators first
 
@@ -64,7 +64,13 @@ The included art-direction and visual-review skills help the assistant plan and 
 
 ## Get started
 
-You need **Dungeondraft 1.2.0.1** and an AI client that can run local MCP servers, installed on the same computer. Codex and Claude Code connect with one double-click; other clients, such as OpenCode, need a one-time manual setup ([other clients](docs/install-packages.md#other-mcp-clients)). The companion download includes everything else you need.
+You need **Dungeondraft 1.2.0.1** and an AI app that can run local MCP servers, on the same computer. There are three ways to connect your AI app. **Pick one:** with two of them, your assistant sees every tool twice.
+
+- **The companion download**, for Codex, Claude Code, OpenCode and other MCP apps: follow steps 1 to 5 below. Codex and Claude Code connect with one double-click; OpenCode with a Connect file and one pasted entry; other apps need a one-time manual setup ([other clients](docs/install-packages.md#other-mcp-clients)).
+- **The Claude desktop app:** install the extension. See [Install from Claude](#install-from-claude).
+- **Claude Code:** install the plugin. See [Install from Claude](#install-from-claude).
+
+Every way needs the mod in Dungeondraft, as in step 2.
 
 Follow the Windows instructions below, or choose [macOS](docs/install-packages.md#macos) or [Linux](docs/install-packages.md#linux).
 
@@ -77,7 +83,7 @@ Open [Releases](https://github.com/thekannen/battlemap-mcp/releases), expand **A
 | `battlemap-mcp-mod-<version>.zip` | Adds MCP Bridge to Dungeondraft. |
 | `battlemap-mcp-companion-<version>-windows-x64.zip` | Connects your AI app to the mod. |
 
-Skip the **Source code** downloads. You do not need them.
+Skip the **Source code** downloads. You do not need them. Installing from Claude instead? Download only the mod ZIP and see [Install from Claude](#install-from-claude).
 
 ### 2. Put the mod in your mods folder
 
@@ -99,10 +105,13 @@ If you are replacing an older bridge, save your map and fully quit Dungeondraft 
 1. Right-click the **companion ZIP** and choose **Extract All**.
 2. Move the whole extracted **battlemap-mcp** folder somewhere permanent.
    For example, open `%USERPROFILE%` in File Explorer, create an **Apps** folder,
-   and put it there. Keep every file inside it, including **_internal**.
-3. Open that folder and double-click **Connect Codex** or **Connect Claude Code**,
-   depending on which app you use. These files end in `.cmd`; Windows may hide
-   the extension. They connect the app and add the included map-making skills.
+   and put it there. Keep every file inside it, including **battlemap-mcp.pkg** and **_internal**.
+3. Open that folder and double-click **Connect Codex**, **Connect Claude Code**
+   or **Connect OpenCode**, depending on which app you use. These files end in
+   `.cmd`; Windows may hide the extension. They connect the app and add the
+   included map-making skills. OpenCode has no way to be connected
+   automatically, so Connect OpenCode shows you one entry to paste into its
+   settings (see [OpenCode](docs/install-packages.md#other-mcp-clients)).
 4. Look for **Setup complete**, then close the window. Fully quit and reopen
    your AI app so it picks up the connection. If the window says Claude Code
    **already has a connection** instead, an earlier install is still registered:
@@ -112,11 +121,11 @@ Do not run files while they are still inside the ZIP. Do not double-click `battl
 
 If **Connect Codex** says automatic connection is unavailable, you can finish in the app without installing another tool: open **Settings → MCP servers → Add server**, choose **STDIO**, name it `battlemap`, and paste the **Command** path shown by the Connect window. Leave arguments empty, save, and restart the connection. See [OpenAI's MCP setup instructions](https://developers.openai.com/codex/mcp/).
 
-**Claude Code** means the Claude coding client, not the Claude chat app. See [client setup help](docs/install-packages.md#client-help) for an existing Claude Code connection, or [other MCP clients](docs/install-packages.md#other-mcp-clients).
+**Connect Claude Code** sets up the Claude Code coding app only. For the Claude desktop chat app, use the extension instead: see [Install from Claude](#install-from-claude). See [client setup help](docs/install-packages.md#client-help) for an existing Claude Code connection, or [other MCP clients](docs/install-packages.md#other-mcp-clients).
 
 ### 4. Check the connection
 
-With a map open in Dungeondraft, double-click **Check connection** in the companion folder. It should say **Ready: connected to Battlemap MCP Bridge**.
+With a map open in Dungeondraft, double-click **Check connection** in the companion folder. It should say **Ready: connected to Battlemap MCP Bridge**. Installed from Claude? There is no Check connection file; go straight to the prompt below.
 
 Then start a new conversation in your AI app and ask:
 
@@ -133,16 +142,29 @@ The checker confirms the mod connection; this first prompt confirms your AI app 
 
 Maps come out noticeably better when the map includes asset packs. Without them the assistant has only Dungeondraft's built-in library of 1,792 assets, and that limits what it can make. Town and market scenes show it most: stalls, signs, goods, and street clutter run out of variety quickly.
 
-Dungeondraft includes packs **per map**, and a map's packs are fixed when the map is created. A pack you have installed is invisible to a map that does not include it, and an object placed from it would be dropped when the map reopens. There are two ways to include packs:
+Dungeondraft includes packs **per map**, and a map's packs are chosen when the map is created. A map cannot use a pack it does not include: an object placed from one would be dropped when the map reopens. Your assistant can still search inside every installed pack and preview its assets, to help you choose which packs to add. It reads only each pack's list of files and its tags, never the art, and leaves out packs whose authors ask other tools not to read them. There are two ways to include packs:
 
 - **When you create a map**, choose the packs you want in Dungeondraft's new-map window.
 - **For a map you already have**, open it and ask your assistant:
 
-  > List the asset packs I have installed and which ones this map includes. Suggest the packs that suit a busy market square, then make a copy of this map that includes the ones I approve.
+  > Search my installed asset packs for market stalls, signs and crates, and tell me which packs have the most. Suggest the packs that suit a busy market square, then make a copy of this map that includes the ones I approve.
 
-  The assistant saves your current map, writes a copy that includes the packs you chose, and opens that copy. Keep working in the copy.
+  The assistant saves your current map, writes a copy that keeps its packs and adds the ones you chose, and opens that copy. Keep working in the copy.
 
 Pick packs that suit the scene rather than all of them: including a very large library is slow, and one big pack can crowd out the rest. This project does not supply art; buy packs from the people who make them.
+
+### Install from Claude
+
+Use this instead of the companion download and its Connect files, not as well. You still need the mod in Dungeondraft.
+
+- **Claude desktop app:** from the same release, download `battlemap-mcp-<version>.mcpb` and open it. Claude shows it under **Settings → Extensions**; approve the install. The extension gives Claude the map tools; it does not include the map-making skills.
+- **Claude Code:** run `/plugin marketplace add thekannen/battlemap-mcp`, then `/plugin install battlemap-mcp@battlemap-mcp`, and restart Claude Code. The plugin brings the map tools and the map-making skills.
+
+**The mod:** install it as in step 2, or ask your assistant to *install the Dungeondraft bridge*. It shows you what it will change and asks first, and if you already have a bridge it keeps a backup of the old one. Then fully quit and reopen Dungeondraft, open a map, and ask the prompt in step 4.
+
+**Switching from a Connect install?** Remove the old connection first, or every tool appears twice: in Claude Code, run `claude mcp remove --scope user battlemap`.
+
+**Updating:** your assistant tells you when a new version is out. Update the plugin with `/plugin`, or download and open the new `.mcpb`, then ask your assistant to install the bridge again and restart Dungeondraft.
 
 ### Platform limits
 
@@ -162,6 +184,8 @@ Pick packs that suit the scene rather than all of them: including a very large l
 | Connect says Claude Code **already has a connection** | An earlier install is still registered, and Connect does not replace it on its own. Open PowerShell (Terminal on a Mac), run the `claude mcp remove` command the window shows, then run Connect again. |
 | Connect says it **kept** existing skills | Skills from an earlier install differ from this version and may hold your own edits, so Connect leaves them in place. To update them, run the command the window shows; your copies are backed up first. |
 | Windows warns about the download or the Connect file | The Windows companion is unsigned, so Windows may warn about it. See [platform limits](#platform-limits). Choose **More info → Run anyway** only for files from this project's Releases page; do not disable Windows security. |
+| Every map tool appears twice | Two ways of connecting are active, for example the plugin or extension and a Connect registration. Keep one. To drop the Connect one in Claude Code, run `claude mcp remove --scope user battlemap`, then restart Claude Code. |
+| Windows: the companion says it cannot load `battlemap-mcp.pkg` | The folder is incomplete. Extract the whole companion ZIP again and keep `battlemap-mcp.exe`, `battlemap-mcp.pkg` and `_internal` together. |
 | The assistant keeps using the same few objects | The map probably includes no asset packs. See [Include your asset packs](#5-include-your-asset-packs). |
 | You asked to see the map but no picture appeared | The assistant does see it, but your AI app folds images inside the tool call — expand the tool call to view it. The assistant is also given the saved file's location, so you can ask it for the file. |
 | macOS blocks the companion | Not a crash. If this is the first launch, make sure the Mac is online so macOS can confirm the notarization with Apple, then open it again. From Finder a block is a "cannot be verified" dialog; from Terminal it is only `Killed: 9` and exit code 137, with no message. See [macOS install](docs/install-packages.md#macos), step 6. |
@@ -170,7 +194,11 @@ Pick packs that suit the scene rather than all of them: including a very large l
 
 ## Privacy
 
-Nothing is collected. The mod and companion talk only to each other, on your computer. Their one internet connection is a once-a-day check for a newer release, which you can turn off. See [Privacy](docs/PRIVACY.md) for details, what your AI client receives, and how to remove saved images.
+Nothing is collected. The mod and companion talk only to each other, on your computer. Their one internet connection is a once-a-day check for a newer release, which you can turn off. Searching your asset packs reads their file lists on your computer; nothing about them leaves it. See [Privacy](docs/PRIVACY.md) for details, what your AI client receives, and how to remove saved images.
+
+## Works well with
+
+[casancam/Dungeondraft-MCP](https://github.com/casancam/Dungeondraft-MCP) is a separate project by another author. It edits Dungeondraft map files while Dungeondraft is closed, makes variants of a map such as a night version, and turns Universal VTT (`.dd2vtt`) exports into Foundry VTT scenes. Use it for offline and batch work, and this project to build inside a running Dungeondraft. Its research into the asset pack format also helped this project search inside your packs.
 
 ## Go deeper
 

@@ -110,3 +110,57 @@ def test_check_connection_is_quiet_when_current(monkeypatch, capsys, state):
     monkeypatch.setattr(updates, "latest", lambda: updates.__version__)
     cli._report_update()
     assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize(
+    "system, machine, companion",
+    [
+        ("Windows", "AMD64", "battlemap-mcp-companion-1.2.0-windows-x64.zip"),
+        ("Darwin", "arm64", "battlemap-mcp-companion-1.2.0-macos-arm64.tar.gz"),
+        ("Darwin", "x86_64", "battlemap-mcp-companion-1.2.0-macos-x64.tar.gz"),
+        ("Linux", "x86_64", "battlemap-mcp-companion-1.2.0-linux-x64.tar.gz"),
+        ("Linux", "aarch64", None),
+    ],
+)
+def test_the_notice_links_this_computers_files(system, machine, companion):
+    """Runtime behavior and validation."""
+    base = "https://github.com/thekannen/battlemap-mcp/releases/download/v1.2.0/"
+    links = updates.downloads("1.2.0", system, machine)
+    assert links["mod"] == base + "battlemap-mcp-mod-1.2.0.zip"
+    assert links["checksums"] == base + "SHA256SUMS"
+    assert links.get("companion") == (base + companion if companion else None)
+
+
+def test_the_notice_message_names_the_files(monkeypatch):
+    monkeypatch.setattr(updates.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(updates.platform, "machine", lambda: "arm64")
+    message = updates.notice("1.1.1", "1.2.0")["message"]
+    assert "macos-arm64.tar.gz" in message and "SHA256SUMS" in message
+    assert "battlemap-mcp-mod-1.2.0.zip" in message
+
+
+@pytest.mark.parametrize(
+    "path, channel",
+    [
+        (
+            "/opt/fixture/.claude/plugins/cache/x/battlemap-mcp/1.2.0/.mcpb-cache/b/server/macos-arm64/battlemap-mcp",
+            "claude-code-plugin",
+        ),
+        (
+            "/opt/fixture/Library/Application Support/Claude/Claude Extensions/ant.dir.x/"
+            "server/macos-arm64/battlemap-mcp",
+            "claude-desktop-extension",
+        ),
+        ("/opt/fixture/Apps/battlemap-mcp/battlemap-mcp", "download"),
+    ],
+)
+def test_the_notice_follows_how_it_was_installed(path, channel):
+    """Runtime behavior and validation."""
+    assert updates.install_channel(path) == channel
+    message = updates.notice("1.1.1", "1.2.0", channel)["message"]
+    if channel == "claude-code-plugin":
+        assert "/plugin" in message and ".tar.gz" not in message
+    elif channel == "claude-desktop-extension":
+        assert "battlemap-mcp-1.2.0.mcpb" in message
+    else:
+        assert "companion" in message

@@ -2,7 +2,9 @@
 
 Start with the [Windows walkthrough](../README.md#get-started). It uses the
 downloadable packages, not a source checkout. This page covers other platforms,
-client help, and updates.
+client help, and updates. Using the Claude desktop app or the Claude Code
+plugin instead? See [Install from Claude](../README.md#install-from-claude):
+you need only the mod from this page.
 
 ## macOS
 
@@ -22,9 +24,12 @@ The Windows companion is unsigned, so SmartScreen warnings there are expected.
    **Apple menu → About This Mac** shows your chip; in Terminal, `uname -m`
    prints `arm64` or `x86_64`. Skip the Source code archives.
 
-   The release also carries `SHA256SUMS` and a `.whl`. **You do not need the
-   `.whl`** — it is for running from Python packaging instead of the companion,
-   and is covered in [developer installation](developer-installation.md). To
+   The release also carries `SHA256SUMS`, a `.whl` and
+   `battlemap-mcp-<version>.mcpb`. **You do not need the `.whl`**: it is for
+   running from Python packaging instead of the companion, and is covered in
+   [developer installation](developer-installation.md). The `.mcpb` is the
+   Claude desktop extension, an alternative to the companion (see
+   [Install from Claude](../README.md#install-from-claude)). To
    check your downloads, run `shasum -a 256 -c SHA256SUMS` in the download
    folder; every listed file should say `OK`.
 
@@ -62,8 +67,10 @@ The Windows companion is unsigned, so SmartScreen warnings there are expected.
    as **~/Apps/battlemap-mcp**. Keep `_internal` and every other file alongside
    the executable.
 
-5. Open **Connect Codex.command** or **Connect Claude Code.command**. These
-   install the bundled skills and register the companion with that client.
+5. Open **Connect Codex.command**, **Connect Claude Code.command** or
+   **Connect OpenCode.command**. These install the bundled skills and register
+   the companion with that client; Connect OpenCode prints an entry for you to
+   paste instead (see [OpenCode](#other-mcp-clients)).
 
 6. **If macOS blocks it.** On the signed companion, make sure the Mac is
    online and open it again; that is usually all it takes, and you do not need
@@ -119,7 +126,7 @@ If you prefer Terminal, from the companion folder:
 ./battlemap-mcp doctor --live --brief
 ```
 
-Use `claude-code` instead of `codex` for Claude Code. On an unsigned build, or
+Use `claude-code` or `opencode` instead of `codex` for those clients. On an unsigned build, or
 on a first launch without a network, both commands hit the step 6 block first.
 
 ## Linux
@@ -177,7 +184,12 @@ With your chosen client installed, run **one** of these commands:
 ./battlemap-mcp setup --client claude-code
 ```
 
-Read the displayed plan and confirm it. Setup installs the bundled skills and
+```sh
+./battlemap-mcp setup --client opencode
+```
+
+For OpenCode, setup installs the skills and prints the entry to paste (see
+[OpenCode](#other-mcp-clients)). Read the displayed plan and confirm it. Setup installs the bundled skills and
 registers this companion's permanent path. Restart your client afterward.
 You may run both commands if you use both clients. See [client help](#client-help)
 if automatic registration is unavailable.
@@ -206,8 +218,11 @@ the window prints the exact executable path for manual setup. In the app, choose
 restart the connection. No separate runtime installation is needed. This manual
 route follows [OpenAI's instructions](https://developers.openai.com/codex/mcp/).
 
-**Claude Code:** Connect uses the `claude` command-line tool. It does not configure
-the Claude chat app. Running Connect again at the same location is harmless.
+**Claude Code:** Connect uses the `claude` command-line tool. It does not set up
+the Claude desktop chat app; for that, use the `.mcpb` extension in
+[Install from Claude](../README.md#install-from-claude). Do not combine a
+Connect registration with the plugin or extension: every tool would appear
+twice. Running Connect again at the same location is harmless.
 If an existing user entry points to an older companion, Connect stops, shows
 the command that entry runs, and says whether that file still exists. Remove
 that one entry before running Connect again:
@@ -222,16 +237,19 @@ finish installing Claude Code, reopen the Connect file, and try again.
 
 ### Other MCP clients
 
-Any AI client that can run a local (STDIO) MCP server works; Codex and Claude
-Code just have a Connect file. In your client's MCP settings, add a local STDIO
+Any AI client that can run a local (STDIO) MCP server works; Codex, Claude
+Code and OpenCode have a Connect file. In your client's MCP settings, add a local STDIO
 server named `battlemap`, with the companion executable's full path as the
 command and no arguments: `battlemap-mcp.exe` on Windows, `battlemap-mcp` on
 macOS and Linux, inside the folder you extracted. Your client starts it for
 you. See [technical configuration](TECHNICAL_REFERENCE.md).
 
-**OpenCode**, as its documentation describes it: add the server to
-`~/.config/opencode/opencode.json` (or an `opencode.json` in your project),
-then restart OpenCode:
+**OpenCode:** open **Connect OpenCode** in the companion folder. It installs
+the map-making skills into `~/.config/opencode/skills/` and prints the entry
+for `~/.config/opencode/opencode.json`. OpenCode has no command that adds a
+server, and the Connect file never edits your settings, so paste the entry
+inside `"mcp"` yourself, restart OpenCode, and check with `opencode mcp list`.
+The entry looks like this, with your companion's full path:
 
 ```json
 {
@@ -252,10 +270,21 @@ loads skills from; for OpenCode, that is `~/.config/opencode/skills/`.
 
 ## Update or remove
 
-**Update:** save your map and quit Dungeondraft and the AI client. Download both
+Your assistant tells you when a new version is out, with direct links to the
+companion for your computer, the mod ZIP and `SHA256SUMS`.
+
+**Update the plugin or extension:** update the plugin with `/plugin` in Claude
+Code, or download the new `battlemap-mcp-<version>.mcpb` and open it in the
+Claude desktop app. Then ask your assistant to install the bridge again (it
+backs up the old one), and fully quit and reopen Dungeondraft.
+
+**Update the companion download:** save your map and quit Dungeondraft and the AI client. Download both
 packages from the same release. Move the old bridge outside all active mods
 folders and replace it with the new one. Replace the **entire** companion folder;
-do not mix a new executable with old `_internal` files. Keeping the same permanent
+do not mix a new executable with an old `battlemap-mcp.pkg` or old `_internal` files.
+On Windows the executable is a small launcher that runs `battlemap-mcp.pkg` from the
+same folder, so if it reports that it cannot load that file, the folder is
+incomplete: extract the whole ZIP again. Keeping the same permanent
 path means the existing registration still works. Run the Connect file again,
 reopen Dungeondraft and a map, and run Check connection.
 
@@ -267,7 +296,8 @@ folder and run:
 .\battlemap-mcp.exe setup --force --client codex
 ```
 
-On Mac or Linux use `./battlemap-mcp`; for Claude Code use `--client claude-code`.
+On Mac or Linux use `./battlemap-mcp`; for Claude Code or OpenCode use
+`--client claude-code` or `--client opencode`.
 Replaced skills are backed up outside the client's active skills folder.
 `--force` applies to skills, not an existing Claude registration.
 
@@ -280,7 +310,8 @@ release, reconnect, and restart Dungeondraft. There is no background updater.
 
 **Remove:** quit the editor and disconnect the server. Remove the `battlemap`
 entry in your AI client's MCP settings, then remove the mod and companion folders
-you installed. Bundled `battlemap-*` skills and this integration's runtime
+you installed. For the plugin, run `/plugin` and uninstall battlemap-mcp; for
+the desktop extension, remove it under **Settings → Extensions**. Bundled `battlemap-*` skills and this integration's runtime
 state can be removed separately; retain wanted captures. Leave other mods and
 Dungeondraft's settings and permissions alone.
 

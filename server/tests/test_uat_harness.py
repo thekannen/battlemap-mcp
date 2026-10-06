@@ -212,3 +212,28 @@ def test_pixel_difference_sees_alpha_and_size_changes():
     harness = _uat_harness()
     assert harness.pixel_difference(opaque, clear) == (0, 0, 8, 8)
     assert harness.pixel_difference(opaque, Image.new("RGBA", (9, 8), (9, 9, 9, 255))) is not None
+
+
+class _Markers:
+    def request(self, command: str, **params):
+        return {}
+
+
+def test_a_case_that_returns_skipped_is_reported_as_a_skip(monkeypatch, tmp_path):
+    """A case with nothing to test must not add to the pass count."""
+    module = _uat_harness()
+    log = tmp_path / "dd.log"
+    log.write_text("")
+    monkeypatch.setattr(module, "LOG", log)
+    monkeypatch.setattr(module.time, "sleep", lambda _s: None)
+    harness = object.__new__(module.Uat)
+    harness.c = _Markers()
+    harness.dirty = True
+    harness.passed, harness.failed, harness.skipped = [], [], []
+
+    harness.check("ran", lambda: "did the thing")
+    harness.check("empty", lambda: "skipped: every installed pack is in this map")
+
+    assert harness.passed == ["ran"]
+    assert harness.skipped == [("empty", "every installed pack is in this map")]
+    assert harness.failed == []

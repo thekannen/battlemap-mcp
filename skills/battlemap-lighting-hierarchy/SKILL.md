@@ -25,6 +25,13 @@ mood comes from the contrast between a lit zone and a dark one, so an even
 ambient is not automatically the safer choice. A fresh map's white is flat
 glare rather than daylight — decide rather than leave it.
 
+The ambient is a time of day, so ask for it in the first question round and
+set it before the first region is judged. Every review made under the wrong
+one is a review of a different map. It also caps what interior light can do:
+under full noon ambient, candles and hearths barely register, while a late
+afternoon gold lets the same sources read as a household going about its
+evening.
+
 What is not optional is legibility. After the ambient and the sources are
 set, look at a render: every zone you expect play in has to read at the table.
 A room that is atmospheric in a close-up and a black box at map zoom has the
@@ -99,6 +106,24 @@ Name the job of each `add_light` before placing it:
 Leave the space between roles dark. Contrast is what makes a lit area mean
 something — and where the surroundings are lit, a focal point can be made by
 *withholding* light instead of adding it.
+
+## "Lived in" is a distribution, not a brightness
+
+A building feels inhabited when light sits where people are now, and not where
+they are not. Light the rooms in use, each from the emitters in it — the
+candle on the table, the hearth, the stove, the lamp by the gate — and let
+lantern light spill through an open doorway into the next room. Leave the
+unused rooms dim on purpose: a dead owner's study, a shut guest room, a
+storeroom nobody has opened today. The contrast tells the story that raising
+the ambient never will.
+
+Name each dark room's reason in the plan, so the darkness reads as a decision
+when you review it and is not "fixed" by a later pass.
+
+**A hand lantern does not stand in a corridor.** In halls and passages, light
+from fixtures on the wall — a wall lantern or sconce on the wall line — and
+put the `add_light` on the fixture. A lantern on the floor mid-corridor reads
+as dropped, and its light as a mistake.
 
 ## Verify the hierarchy
 

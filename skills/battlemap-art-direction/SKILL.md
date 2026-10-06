@@ -17,9 +17,10 @@ on.
    When a materially different visual direction is plausible, ask the user to
    choose before proceeding.
    Record: Use, Focal event, Primary and secondary zones, Route, Route states,
-   Palette and mood, Density gradient, Coverage and emphasis, Playability,
-   Asset searches and Completion checks. State whether each planned route is
-   open, blocked or gated before choosing assets.
+   Setting inputs, Art family, Palette and mood, Density gradient,
+   Coverage and emphasis, Playability, Asset searches and Completion checks.
+   State whether each planned route is open, blocked or gated before choosing
+   assets.
 3. Choose environment, interior, or both. Preserve empty space around the
    focal event and along the primary route.
 4. Set a [material language](../battlemap-material-language/SKILL.md) and
@@ -28,6 +29,17 @@ on.
    the search rather than assuming an installed pack.
 
 Do not place anything until the plan is coherent.
+
+**Climate and culture are inputs, not decoration.** A desert city, a northern
+port and a river delta differ in their ground, how much grows and where, what
+water means, who is in the street and what time the light says it is. Learn
+them in the first question round, or infer them and say so: discovered after
+the ground is laid, they mean relaying it.
+
+**One art family is a constraint, like the palette.** Name it in the style
+bible and keep objects, terrain, patterns, water and prefabs inside it; the
+[material language](../battlemap-material-language/SKILL.md) skill says how
+to search inside it and count what strayed.
 
 **Load the placing skill before placing anything.** This skill plans; it does
 not carry the placement rules. Before the first object goes down, load

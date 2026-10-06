@@ -18,7 +18,11 @@ separates whole-map hierarchy work from this final repair pass.
 1. Use `fit_elements` or an equivalent view, then `export_map` for a whole-map
    read of hierarchy, zones, coverage and the primary route. Check that
    barriers, openings and lighting reinforce the intended movement and focus.
-2. Frame a focused screenshot at the important encounter or room scale.
+2. Frame a focused screenshot at the important encounter or room scale. The
+   whole-map export judges composition, not placement: a piece facing the
+   wrong way, a kit missing its other half or a cup off its table shows only
+   at token zoom. Frame one room at a time and name each object, its facing
+   and what it touches.
 3. Record a concrete observation for Brief fit, Composition, Material depth,
    Believability and Playability. Name a location and visible evidence, not a
    vague preference.

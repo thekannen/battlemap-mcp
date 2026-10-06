@@ -229,3 +229,39 @@ def find_unexplained_lights(
             "each finding."
         ),
     }
+
+
+# --- which art family a map is actually drawn in ----------------------------
+
+_PACK_PATH = re.compile(r"^res://packs/([^/]+)/")
+
+# What an asset outside any pack is counted under: Dungeondraft's own library.
+CORE_ASSETS = "core"
+
+
+def pack_of(asset: str) -> str:
+    """The pack id an asset path comes from, or CORE_ASSETS for the stock library."""
+    match = _PACK_PATH.match(asset or "")
+    return match.group(1) if match else CORE_ASSETS
+
+
+def pack_census(assets_by_kind: dict[str, list[str]]) -> dict:
+    """Count assets per pack, per kind: objects, terrain slots, patterns, paths.
+
+    Packs are drawn in different styles, and a map mixing them reads as a
+    collage however well each piece is placed. This is the cheap check for it:
+    every count outside the pack family the plan chose is a finding. The pack
+    ids are the ones `list_asset_packs` names.
+    """
+    by_pack: dict[str, dict[str, int]] = {}
+    for kind, assets in assets_by_kind.items():
+        for asset in assets:
+            if not asset:
+                continue
+            counts = by_pack.setdefault(pack_of(asset), {})
+            counts[kind] = counts.get(kind, 0) + 1
+    ordered = sorted(by_pack.items(), key=lambda item: -sum(item[1].values()))
+    return {
+        "packs": [{"pack": pack, "counts": counts} for pack, counts in ordered],
+        "pack_count": len(ordered),
+    }

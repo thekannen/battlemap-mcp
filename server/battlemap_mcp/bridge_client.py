@@ -48,6 +48,7 @@ COMPANION_TOOLS = frozenset(
         "inspect_dungeondraft_installation",
         "install_dungeondraft_bridge",
         "prepare_map_with_packs",
+        "search_pack_contents",
         "validate_floorplan",
         "validate_placements",
         "validate_scene",

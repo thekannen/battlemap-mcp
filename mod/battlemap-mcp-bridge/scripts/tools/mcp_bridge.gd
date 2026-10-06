@@ -1596,6 +1596,7 @@ func _get_map_style() -> Dictionary:
 		"building_wear": MAP_WEAR_NAMES[wi] if wi >= 0 else null,
 		"grid_style": MAP_GRID_NAMES[gi] if gi >= 0 else null,
 		"building_wear_texture": wear_path, "grid_texture": grid_path,
+		"grid_visible": Global.World.get("GridMesh").visible,
 		"options": { "building_wear": MAP_WEAR_NAMES, "grid_style": MAP_GRID_NAMES } })
 
 func _restore_map_style(snap):
@@ -2489,6 +2490,8 @@ func _preview_assets(req : Dictionary) -> Dictionary:
 	for i in range(assets.size()):
 		var asset = str(assets[i])
 		var tex = _asset_tex(category, asset)
+		if tex == null:
+			tex = _unincluded_pack_texture(asset)
 		if tex == null:
 			missing.append(asset)
 			continue
@@ -3556,10 +3559,11 @@ func _list_elements(req : Dictionary) -> Dictionary:
 	# Points are off unless asked for: this map has 844 paths, and returning
 	# every polyline would bury the listing in tens of thousands of coordinates.
 	var want_points = bool(req.get("include_points", false))
+	var want_opaque = bool(req.get("include_bounds", false))
 	for node in _real_children(level, kind):
 		total += 1
 		if total > offset and out.size() < limit:
-			out.append(_describe(node, want_points))
+			out.append(_describe(node, want_points, want_opaque))
 	return _ok({ "kind": kind, "count": out.size(), "total": total,
 		"offset": offset, "truncated": (offset + out.size()) < total,
 		"elements": out })
@@ -3699,7 +3703,7 @@ func _get_element(req : Dictionary) -> Dictionary:
 	var node = _resolve(req)
 	if node == null:
 		return _err("no element with id " + str(req.get("id")))
-	var out = _describe(node)
+	var out = _describe(node, true, true)
 	var effects = _patch_node_effects(node)
 	if not effects.empty():
 		out["unofficial_patch_effects"] = effects
@@ -5455,6 +5459,7 @@ func _operation_view(job : Dictionary) -> Dictionary:
 		"chunks_rendered": job["chunks_rendered"],
 		"elapsed_ms": end_ms - job["started_ms"] }
 	if job["error"] != "": view["error"] = job["error"]
+	if job.get("grid") != null: view["grid"] = job["grid"]
 	if job["overdue"]:
 		view["overdue"] = true
 		view["recovery"] = ("rendering for over %d s with the camera away from where " +
@@ -5471,6 +5476,9 @@ func _settle_export(state : String, error : String) -> void:
 	var before = int(job.get("quality_before", -1))
 	if before >= 1 and before <= 100 and Global.Exporter.has_method("set_Quality"):
 		Global.Exporter.set_Quality(before)
+	var grid_mesh = Global.World.get("GridMesh") if Global.World != null else null
+	if job.get("grid_before") != null and grid_mesh != null:
+		grid_mesh.visible = bool(job["grid_before"])
 	job["state"] = state
 	job["error"] = error
 	job["finished_ms"] = OS.get_ticks_msec()
@@ -5546,16 +5554,28 @@ func _export_map(req : Dictionary) -> Dictionary:
 		return _err("quality must be 1 to 100")
 	if _camera() == null:
 		return _err("no editor camera; the exporter renders through it")
+
+	var grid_before = null
+	if req.has("grid"):
+		if typeof(req["grid"]) != TYPE_BOOL:
+			return _err("grid must be true or false")
+		var grid_mesh = Global.World.get("GridMesh")
+		if grid_mesh == null:
+			return _err("this map has no grid mesh to show or hide")
+		grid_before = grid_mesh.visible
 	var quality_before = -1
 	if Global.Exporter.has_method("get_Quality") and Global.Exporter.has_method("set_Quality"):
 		quality_before = int(Global.Exporter.get_Quality())
 		Global.Exporter.set_Quality(quality)
+	if grid_before != null:
+		Global.World.get("GridMesh").visible = bool(req["grid"])
 	_export_job = { "operation_id": "export-%d-%d" % [OS.get_unix_time(), _operation_serial],
 		"kind": "export", "state": "rendering", "path": path, "format": fmt,
 		"ppi": ppi, "pixels": pixels, "chunks_rendered": 0, "seen": {},
 		"camera_before": _camera_key(), "started_ms": OS.get_ticks_msec(),
 		"last_move_ms": -1, "finished_ms": -1, "error": "", "overdue": false,
-		"quality": quality, "quality_before": quality_before }
+		"quality": quality, "quality_before": quality_before,
+		"grid": req.get("grid"), "grid_before": grid_before }
 	Global.Exporter.Start(mode, ppi, path)
 	return _ok(_operation_view(_export_job))
 
@@ -5836,7 +5856,25 @@ func _resolve(req : Dictionary):
 func _is_text(node) -> bool:
 	return (node is Control) and node.has_method("SetFontSize")
 
-func _describe(node, want_points : bool = true) -> Dictionary:
+var _opaque_rects := {}
+
+func _opaque_rect(tex) -> Array:
+	var key = str(tex.resource_path)
+	if key != "" and _opaque_rects.has(key):
+		return _opaque_rects[key]
+	var out := []
+	var img = tex.get_data()
+	if img != null and not img.is_empty():
+		if img.is_compressed():
+			img.decompress()
+		if not img.is_compressed():
+			var used = img.get_used_rect()
+			out = [used.position.x, used.position.y, used.size.x, used.size.y]
+	if key != "":
+		_opaque_rects[key] = out
+	return out
+
+func _describe(node, want_points : bool = true, want_opaque : bool = false) -> Dictionary:
 	# A wall-mounted portal carries a WallID script var and lives under its wall;
 	# describe it richly (position + outward normal) like list_elements does.
 	if node.get("WallID") != null and node.get("Direction") != null \
@@ -5880,6 +5918,10 @@ func _describe(node, want_points : bool = true) -> Dictionary:
 		var tex_size = tex.get_size()
 		if tex_size.x > 0 and tex_size.y > 0:
 			d["texture_size"] = _vec(tex_size)
+			if want_opaque:
+				var opaque = _opaque_rect(tex)
+				if opaque.size() == 4:
+					d["opaque_rect"] = opaque
 	var col = _read_node_color(node)
 	if col != null:
 		d["color"] = "#" + col.to_html(false)
@@ -6088,6 +6130,35 @@ func _asset_tex(category : String, asset):
 	if tex == null:
 
 		tex = Script.GetAssetTexture(category, asset)
+	return tex
+
+func _unincluded_pack_texture(asset : String):
+	var pack_id = _pack_id_of(asset)
+	if pack_id == "" or asset.find("..") >= 0 or _included_pack_ids().has(pack_id):
+		return null
+	var opt_in = _read_pack_manifest(pack_id).get("allow_3rd_party_mapping_software_to_read")
+	if typeof(opt_in) == TYPE_BOOL and not opt_in:
+		return null
+	var ext = asset.get_extension().to_lower()
+	if not (ext in ["png", "webp", "jpg", "jpeg"]):
+		return null
+	var f = File.new()
+	if not f.file_exists(asset) or f.open(asset, File.READ) != OK:
+		return null
+	var bytes = f.get_buffer(f.get_len())
+	f.close()
+	var img = Image.new()
+	var err = ERR_FILE_UNRECOGNIZED
+	if ext == "webp":
+		err = img.load_webp_from_buffer(bytes)
+	elif ext == "png":
+		err = img.load_png_from_buffer(bytes)
+	else:
+		err = img.load_jpg_from_buffer(bytes)
+	if err != OK or img.is_empty():
+		return null
+	var tex = ImageTexture.new()
+	tex.create_from_image(img, 0)
 	return tex
 
 func _objects_asset_problem(asset : String) -> String:

@@ -756,3 +756,59 @@ def test_windows_preflight_is_unavailable_on_other_platforms(tmp_path, monkeypat
 
     monkeypatch.setattr(sys, "platform", "linux")
     assert preflight._windows_directory_access(tmp_path) == "unknown"
+
+
+def opencode_home(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    return home / ".config" / "opencode"
+
+
+def test_opencode_setup_installs_skills_and_shows_the_entry(monkeypatch, tmp_path, capsys):
+    """Runtime behavior and validation."""
+    import json
+
+    from battlemap_mcp import cli
+
+    config_dir = opencode_home(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        cli.client_config,
+        "register_client",
+        lambda *a: pytest.fail("OpenCode has no registration command to run"),
+    )
+    launcher = tmp_path / "companion"
+    args = ["setup", "--client", "opencode", "--server-executable", str(launcher), "--yes"]
+    assert cli.main(args) == 0
+    assert (config_dir / "skills" / "battlemap-interiors" / "SKILL.md").is_file()
+    assert not (config_dir / "opencode.json").exists()
+    output = capsys.readouterr().out
+    pasted = json.loads("{" + output.split("add:\n", 1)[1].split("\nThen", 1)[0] + "}")
+    assert pasted == {"battlemap": {"type": "local", "command": [str(launcher)], "enabled": True}}
+
+
+def test_opencode_setup_recognises_its_own_entry_and_a_foreign_one(monkeypatch, tmp_path, capsys):
+    import json
+
+    from battlemap_mcp import cli
+
+    config_dir = opencode_home(monkeypatch, tmp_path)
+    config_dir.mkdir(parents=True)
+    launcher = tmp_path / "companion"
+    config = config_dir / "opencode.json"
+    original = {
+        "mcp": {
+            "other": {"type": "local", "command": ["x"]},
+            "battlemap": {"type": "local", "command": [str(launcher)], "enabled": True},
+        }
+    }
+    config.write_text(json.dumps(original))
+    args = ["setup", "--client", "opencode", "--server-executable", str(launcher), "--yes"]
+    assert cli.main(args) == 0
+    assert "already runs this companion" in capsys.readouterr().out
+    original["mcp"]["battlemap"]["command"] = ["/old/companion"]
+    config.write_text(json.dumps(original))
+    assert cli.main(args) == 1
+    assert "/old/companion" in capsys.readouterr().out
+    assert json.loads(config.read_text()) == original  # never rewritten

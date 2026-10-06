@@ -27,9 +27,12 @@ everything already placed.
 requires an explicit list, because including everything is not free. Packs vary
 enormously in size: one large pack can hold more assets than every other pack
 combined, and gigabytes of it may have nothing to do with the map you were
-asked for. Each entry from `list_asset_packs` reports `name`, `version` and
-`author` — pick the ones whose subject matches the brief, a forest pack for a
-forest, a furniture pack for an interior, and say which you chose and why.
+asked for. A pack's name rarely says what is in it, so search inside the packs:
+`search_pack_contents(searches=[...])` takes the brief's key pieces (a well, a
+pergola, hay bales) and counts the matches in every installed pack, including
+the ones this map lacks. Choose the packs that actually hold what the brief
+needs, and say which you chose and why. A pack whose author opted out of
+third-party tools is listed as not searched; judge that one by its name.
 
 **An asset from a pack this map lacks is refused, not silently lost.**
 `list_assets` offers only what the map can actually keep and reports
@@ -48,10 +51,10 @@ rooms and routes on that lattice. Never change the user's snap settings.
 **Ask before you build, in one round.** A brief that leaves a real design
 decision open does not get better by guessing: the map gets built, shown, and
 built again. Before planning, look for decisions that change WHAT you make
-rather than how you decorate it — the setting and era, what the map is for
-(battle map, exploration, illustration), its size and scale, the time of day and
-its light, the focal event, whether a structure is a building, a ruin or a
-cavern.
+rather than how you decorate it — the setting and era, the climate and culture,
+what the map is for (battle map, exploration, illustration), its size and
+scale, the time of day and its light, the focal event, whether a structure is
+a building, a ruin or a cavern.
 
 **Say which way you went.** State either the questions you are asking or, in
 one line, that the brief settles everything and why. A session given a brief
@@ -65,7 +68,7 @@ none, and manufacturing questions to look thorough wastes a turn; a one-line
 brief ("make me a tavern") usually needs four or five. Ask only what you cannot
 decide — never which table asset to use, and never anything the style bible
 exists for you to settle. Do not drip-feed more questions mid-build; this round
-is what prevents that.
+is what prevents that. The one planned exception is the taste check in phase 6.
 
 **Choose the tools before you choose the assets.** Dungeondraft has several
 systems that produce a similar-looking result by different means, and picking
@@ -275,6 +278,14 @@ one **a purpose and a level** before crafting any of them. The purpose is what
 happens there: dining, service, storage, sleeping, passage. A region whose
 purpose you cannot name will not read as anything once it is furnished.
 
+**The room list comes from the building's class, not only from the brief's
+words.** A brief that names a hall, a study and a bedroom for a wealthy house
+still implies a kitchen, a pantry, servants' quarters, a bath, guest rooms and
+probably a library; a farmhouse implies a byre and a store, a temple a
+vestry. Expand the named rooms into the program a building of that class
+needs, write it into the style bible's room program, and tell the user which
+rooms you added.
+
 | Level | Meaning |
 | --- | --- |
 | Hero | Carries the focal event. Deepest detail; usually one region, rarely two. |
@@ -334,6 +345,14 @@ For each: frame it with `set_camera` (or `fit_elements`), build it to its
 assigned level, capture a framed `screenshot`, repair only what that view shows,
 then `save_map` and move on.
 
+**Check the user's taste after the first dressed region, not at the end.**
+Whichever region is finished first, exterior or room, show it: give the user
+the saved path of a token-zoom screenshot, name the art family and the
+choices it shows, and ask whether to continue in that direction. A mismatch
+in style found here costs one region; found after the whole map is dressed,
+it costs every region. This is the one question allowed mid-build; after it,
+build on the answer.
+
 ## 7. Interior rooms, one at a time
 
 **Look for a prefab before hand-composing anything that repeats.** Call
@@ -341,8 +360,11 @@ then `save_map` and move on.
 exists, placing it is both faster and more coherent than assembling it from
 parts, because its parts were composed together. Place ONE first, read what
 `place_prefab` reports it created, and look at it: a prefab may bring elements
-this bridge cannot transform, and the response names what it skipped. If it
-suits, reuse it and vary rotation and position rather than rebuilding it.
+this bridge cannot transform, and the response names what it skipped. A
+prefab passes the same checks as anything placed by hand: its art family, and
+whether its contents tell this room's story rather than the one its name
+suggests. If it fails, undo it at once, while it is still the latest step. If
+it suits, reuse it and vary rotation and position rather than rebuilding it.
 
 Hand-composition is for the unique anchors — the thing the room is about — and
 for cases where no prefab fits. It is not the default.
@@ -350,7 +372,21 @@ for cases where no prefab fits. It is not the default.
 Work each room with the [interiors](../battlemap-interiors/SKILL.md) skill in
 the same rhythm — frame, build to the assigned level, verify, checkpoint, move
 on. Finish a room before starting the next; a room you keep returning to is
-taking budget from one that has had none.
+taking budget from one that has had none. Its dressing layers from the plan —
+anchor, secondary pieces, surface dressing, wall dressing — are all present
+before it counts as finished.
+
+**Review each room at token zoom, object by object, before leaving it.** The
+whole-map export judges composition; it cannot judge placement. A sideways
+fireplace, a bed with no frame, a bench facing its wall, a curtain with no
+rod, a bush through the boundary wall and a cup off the table edge are all
+invisible at map scale and obvious at the zoom a player reads the map at. So
+frame the finished room alone (`fit_elements` on its walls and contents, or
+`set_camera` on its centre) and walk the `screenshot` piece by piece: what is
+it, which way does it face, what does it touch, what is it for. Review in the
+same rhythm you build — one room, then the next — rather than sweeping the
+whole map with one "fix every room" pass, which spreads attention as thinly as
+the broad build passes do.
 
 **An object that carries its meaning through its neighbours needs them in the
 same pass.** A bar counter with no stools, no bottles and no back shelf reads
@@ -418,6 +454,10 @@ and why, rather than dropping it from the report.
 Read `complete` and `coverage` too. A validator that could not read the whole
 map says so, and an incomplete verdict is not a clean one.
 
+Count the assets per pack as the
+[material language](../battlemap-material-language/SKILL.md) describes,
+and report anything outside the chosen art family with the reason it stayed.
+
 Then capture a whole-map `export_map` and check that regions built apart still read
 as one place — consistent materials, an unbroken route, and emphasis where the
 plan put it. Run the composition audit, then
@@ -450,7 +490,8 @@ chose:
   `get_map_style`, then verify the rendered effect rather than trusting a menu.
 - **Which outputs.** `export_map` renders the whole map without UI. A GM
   version and a player version are different files, not one file with a
-  caveat.
+  caveat. Ask whether they want the grid: sharing and VTTs that draw their
+  own usually want `grid=False`.
 - **VTT.** Universal VTT export cannot be driven from here — it only runs from
   Dungeondraft's own export window. If the user wants one, say so plainly and
   hand it over rather than appearing to have produced it.

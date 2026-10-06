@@ -23,6 +23,40 @@ Apply the same restraint to surfaces. Choose wall and floor materials that read
 as one system, then use terrain slots — which blend rather than compete — to
 add controlled variety where appropriate.
 
+## Draw the whole map from one art family
+
+Asset packs are drawn in different styles: painterly and near-realistic,
+clean-lined and cartoonish, softly stylised, flat stock art. Each looks right
+on its own, and a map that picks per object, by name and by what turned up
+first, ends with all of them side by side. Nobody reads that as a place; they
+read "this doesn't match", object after object, and every mismatch is a
+replacement later.
+
+So choose the art family in the style bible, before the first placement, and
+hold it as a constraint like the palette. Record its pack ids from
+`list_asset_packs`. Search inside it first: an asset's path carries its pack
+id, so `list_assets(match_mode='tokens', search='<pack id> bench')` stays
+inside the family. Reach outside only when the family has nothing for the
+job, and say so when you do.
+
+The constraint covers everything with a texture, not only objects:
+
+- **Terrain and patterns.** Stock grass under painterly trees reads as a
+  cartoon lawn; a floor pattern from another family flattens a room the same way.
+- **Water.** A stock water body beside painterly art can look like it belongs
+  to another map. Compare it in a render before keeping it; see
+  [environments](../battlemap-environments/SKILL.md) for the alternative.
+- **Prefabs.** A prefab brings its own family and its own story. Its name says
+  less than its contents: a set called a market can be an arms dealer's stall.
+  Look at what it placed before keeping it, and undo it while it is still the
+  latest step, because a prefab is many elements to remove by hand.
+
+**Count it at every checkpoint.** `validate_scene` reports `art_families`:
+objects, walls and terrain slots counted per pack, `core` being the stock
+library. Add the patterns you kept ids for; their paths name their pack too
+(`res://packs/<id>/`). Every count outside the chosen family is a finding to
+fix or to name as an exception.
+
 ## Choose families, then search
 
 Write these into the style bible before placing anything, then use `list_assets`
@@ -154,6 +188,20 @@ Two things that measurement then tells you:
 - **The bounds ignore rotation.** They describe the unrotated box, so a rotated
   asset reports a footprint with its width and height the wrong way round. Swap
   them yourself for anything you have turned.
+
+### A size in the name is not the size
+
+Many assets end in a footprint such as `_1x1` or `_2x2`, and it describes the
+cell the artist drew in, not what renders. A stone lamp pillar named `1x1` had
+a 76-pixel texture and needed a scale above 4 to stand as a gate pier; a coal
+fire named `1x1` needed about 3 to fill a hearth; a `2x2` pile of books needed
+0.22 to sit on a table. Plants and bushes from painterly packs routinely render
+well past their named tile.
+
+Read `texture_size` from `list_assets` or `get_element` and size from it:
+`scale = desired_tiles * 256 / texture_px`. Size dressing against what it
+sits on, not against the grid: books smaller than their table, tongs shorter
+than their bench.
 
 ### Measure the space it has to sit in, too
 

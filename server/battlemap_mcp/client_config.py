@@ -171,3 +171,27 @@ def inspect_registration(path: Path) -> str:
     if not entry["command"].strip():
         return "invalid battlemap registration"
     return "registered (connection not tested)"
+
+
+def opencode_config_path() -> Path:
+    """OpenCode's global config. It has no command that adds a server, and this
+    module does not write client settings, so setup shows the entry instead."""
+    return Path.home() / ".config" / "opencode" / "opencode.json"
+
+
+def opencode_entry(executable: Path) -> dict[str, Any]:
+    """The `mcp` entry OpenCode needs: a local stdio command with no arguments."""
+    validate_launcher(executable)
+    return {"type": "local", "command": [str(executable)], "enabled": True}
+
+
+def opencode_registered_command(path: Path | None = None) -> list[str] | None:
+    """The command of an existing OpenCode `battlemap` entry, if any."""
+    try:
+        config = json.loads((path or opencode_config_path()).read_text(encoding="utf-8"))
+        command = config["mcp"]["battlemap"]["command"]
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError):
+        return None
+    if isinstance(command, list) and all(isinstance(part, str) for part in command):
+        return command
+    return None

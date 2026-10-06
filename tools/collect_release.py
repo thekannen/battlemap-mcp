@@ -68,6 +68,11 @@ def summary(changelog: str, version: str) -> str:
     found = heading.search(changelog)
     if found is None:
         raise ValueError(f"CHANGELOG.md has no '## {version}' section")
+    if not re.search(r" — \d{4}-\d{2}-\d{2}$", found.group(0)):
+        raise ValueError(
+            f"CHANGELOG.md's '## {version}' heading has no date; write "
+            f"'## {version} — YYYY-MM-DD', the publication date"
+        )
     body = changelog[found.end() :]
     following = re.search(r"^## ", body, re.MULTILINE)
     section = body[: following.start()] if following else body

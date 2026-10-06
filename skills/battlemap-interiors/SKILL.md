@@ -41,6 +41,15 @@ without making every room equally accented.
    layer `sorting` only reorders siblings and cannot lift a cup above its
    table. The response reports the layer the object actually landed on — read
    it back rather than assuming it took.
+
+   What stands on a surface also stays INSIDE it: the surface's layer plus
+   100, a scale chosen against the surface's measured footprint, and every
+   edge within the surface's edge. A book pile wider than its table, a board
+   over the table's lip, a candle off the corner of a desk and a tap past the
+   end of its tub all read as careless at token zoom. Table-top things stand
+   on tables; a table candelabra on the floor is a misplacement, not a choice.
+   `validate_placements` lists what reaches past its surface under
+   `surface_overflow`.
 6. Mask wall junctions. Where walls meet at a corner or a T-junction the join
    reads as an editing seam rather than construction. A post, pillar or column
    set over the join, on a layer above the walls, turns the seam into structure
@@ -74,6 +83,57 @@ from one thing instead:
 A zone is finished when someone can say what happens there without being told.
 If it needs a caption, the anchor is not carrying enough support.
 
+**Every piece has an anchor of its own, and its purpose says where.** A bed's
+head goes to a wall; a desk faces into the room with its chair in front of it;
+a mirror stands by the dressing table; an instrument sits beside a seat in a
+corner; a sink goes on a wall clear of the doors. A lute in the middle of a
+corridor, a dress form mid-floor, or a bed on a rug in the centre of the room
+with its headboard against nothing reads as dropped. A piece you cannot give
+an anchor is a candidate for removal, not for the middle of the floor.
+
+**Seating around a table is a set, not a scatter.** Measure the table with
+`get_element` on its id (`bounds`, after its turn and scale), then derive the chairs from its edges: evenly spaced
+along each long side, the head chairs centred on the ends, one scale for the
+whole set, and one place setting in front of each chair. Chairs placed at
+"about" the edge come out uneven in spacing and in size, and a long table
+shows it at once. Keep the variation small here: a degree or two of turn, not
+a different size per chair.
+
+**A lived-in room is furnished in layers.** Write each room's layers into the
+plan and check each is present before calling the room done:
+
+1. the anchor furniture
+2. secondary seating, side tables and storage
+3. surface dressing: cups, candles, books, tools at their work
+4. wall dressing: portraits, shelves, mirrors, hangings
+
+How deep each layer goes follows the room's emphasis and the household: a
+wealthy home's rooms with only the first layer read as empty, while a servant's
+room or a storeroom stops sooner on purpose.
+
+## Some fixtures are kits
+
+Some packs draw one piece of furniture as several assets meant to be stacked,
+and a part placed alone reads as broken: bedding with no bed under it looks
+like a comforter on the floor, a hearth slab with no chimney breast is a pale
+block off the wall, a curtain without its rod renders as a squiggle. When a
+folder or file name says Blankets, Base, Chimney, Frame, Ring, Brace, Cloth,
+Rod or Fill, search for its siblings with `list_assets` before placing it, and
+place the kit together, each part a layer above the one it rests on.
+
+| Part on its own | Needs |
+| --- | --- |
+| Bed blankets or bedding | the bed frame of the same size underneath |
+| Fireplace base (the hearth slab) | the chimney piece (breast and mantel) above it, and a fire in it |
+| Globe sphere or ring | the brace or stand it turns in |
+| Window frame | the sill or glass piece, or it renders as an empty frame |
+| Curtain cloth | the rod it hangs from, on the wall |
+| Door frame | it has no leaves; the door itself is an `add_portal` |
+
+Look at the first assembled kit in a screenshot before repeating it, and check
+that the parts line up and face the same way. `validate_placements` lists a
+part placed without its sibling under `lone_kit_parts`.
+
 **A building that stops at its own walls reads as a cutout.** Unless the brief
 is explicitly an interior-only map, give it the ground it stands on and a few
 tiles of the world outside: the approach, a yard, a neighbour's wall, the road
@@ -92,7 +152,9 @@ counter belongs squared to its wall. Chairs, stools, tableware, sacks and
 crates do not: give each a slightly different scale (about 0.85-1.15) and a few
 degrees of turn. A room at exactly 1.0 and quarter turns reads as a showroom
 rather than a place in use. Set the variation in the placing call, not in a
-repair pass afterwards.
+repair pass afterwards. Vary the variant as well: where a family offers A1, A2
+and B1, use several. A row of identical candles or bushes reads as stamped
+however differently each is turned.
 
 ## Use the walls
 
@@ -155,9 +217,29 @@ rotation from the wall it stands on:
 
 Left unrotated on a south wall, a bookshelf therefore has its back to the room
 and its books to the wall — which is how a tavern ended up with every shelf
-facing the partition it stood against. Being flush matters as much as facing:
-seat the back edge ON the wall line, half the asset's depth away from it, or the
-piece reads as drifting into the room.
+facing the partition it stood against. A bench works the same way: its
+backrest is at the top of the sprite, so against a north wall it takes 0, and
+180 turns it to face the wall.
+
+**This is the usual drawing, not a law, so check each family once.** Place
+the first instance of every wall-facing family, frame it, and look at which
+way it faces before placing the rest. Known exceptions:
+
+| Family | At rotation 0 | So |
+| --- | --- | --- |
+| Rectangular fireplace base and chimney pieces in some painterly packs | drawn side-on | a quarter turn off the table above: on a north wall, 90 rather than 0 |
+
+Add to this list as you find others; a wrong facing passes every footprint
+check.
+
+**Hug the wall; do not approach it.** Being flush matters as much as facing.
+Compute the position from the wall's own coordinate, not from "near the
+wall": the wall line plus or minus half the asset's depth along the wall's
+normal, with the depth from `texture_size` times scale. Portraits, rails,
+benches, banners and lanterns half a tile out read as floating. Then read
+`adrift_fixtures` in `validate_placements`, which reports wall fixtures —
+torches, hangings, curtains, chimneys, windows and `Wall_` pieces — standing
+off every wall.
 
 `preview_assets` renders every candidate at rotation 0, so what sits at the
 bottom of the cell is what will face the room when you place it unrotated.

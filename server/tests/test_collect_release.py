@@ -153,3 +153,10 @@ def test_the_summary_may_not_land_among_the_assets(tmp_path):
     result, _ = _summary(tmp_path, out=tmp_path / "release" / "summary.md")
     assert result.returncode != 0
     assert "outside the asset directory" in result.stderr
+
+
+def test_an_undated_section_is_refused(tmp_path):
+    """The release page must not go out under a heading still waiting for its date."""
+    result, _ = _summary(tmp_path, CHANGELOG.replace("## 0.2.0 — 2026-09-24", "## 0.2.0"))
+    assert result.returncode != 0
+    assert "has no date" in result.stderr

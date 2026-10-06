@@ -1166,3 +1166,100 @@ def test_interiors_puts_the_building_in_a_world():
     """ "There is no outside textures, just a tavern (no street or world)"."""
     prose = _prose("skills/battlemap-interiors/SKILL.md")
     assert "stops at its own walls" in prose
+
+
+def test_a_map_commits_to_one_art_family_and_counts_strays():
+    """Packs are drawn in different styles; picking per object mixes them all.
+
+    The family is a plan field and a constraint, it covers terrain, water and
+    prefabs as well as objects, and it is checked by counting assets per pack,
+    which a path already tells you.
+    """
+    style = (REPOSITORY_ROOT / "skills" / "_shared" / "style-bible.md").read_text()
+    material = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text()
+    art = (REPOSITORY_ROOT / "skills" / "battlemap-art-direction" / "SKILL.md").read_text()
+    lowered = material.lower()
+
+    assert "Art family" in style and "Art family" in art
+    assert "Setting inputs" in style and "Setting inputs" in art
+    assert "one art family" in lowered
+    for surface in ("terrain", "water", "prefab"):
+        assert surface in lowered
+    # the census is runnable from what list_elements already returns
+    assert "res://packs/<id>/" in material
+    assert "every checkpoint" in lowered
+    # a size in a name is not a size: read the texture instead
+    assert "texture_size" in material and "_1x1" in material
+
+
+def test_interiors_places_kits_whole_and_dressing_inside_its_surface():
+    """A part placed alone, a facing assumed, a fixture near its wall: all read as broken.
+
+    Each passes the footprint checks, so the skill has to name the rule and,
+    where one exists, the validator list that reports it.
+    """
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text()
+    lowered = text.lower()
+
+    assert "some fixtures are kits" in lowered
+    for part in ("blankets", "chimney", "brace", "rod", "sill"):
+        assert part in lowered
+    # the facing table is the default; the first instance of a family is checked
+    assert "check each family once" in lowered
+    assert "known exceptions" in lowered
+    # a wall fixture is positioned from the wall's coordinate, then measured
+    assert "hug the wall" in lowered
+    assert "adrift_fixtures" in text
+    # dressing stays inside its surface, a layer above it
+    assert "stays inside" in lowered
+    # purpose decides the place; seating derives from the table's edges
+    assert "anchor of its own" in lowered
+    assert "a set, not a scatter" in lowered
+    assert "in layers" in lowered
+    assert "vary the variant" in lowered
+
+
+def test_environments_covers_the_street_planting_register_weathering_and_water():
+    """A site is more than the yard inside its wall, and ground records its weather."""
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-environments" / "SKILL.md").read_text()
+    lowered = text.lower()
+
+    assert "street is a region" in lowered
+    assert "register" in lowered and "groomed" in lowered
+    # plants keep clear of walls, by measurement
+    assert "crossing_walls" in text
+    assert "needs a bed" in lowered
+    # weathering is many light dabs, in a slot planned for it
+    assert "sparse brushwork" in lowered
+    assert "paintable slot" in lowered
+    # small still water follows the art family; add_water is for large or moving water
+    assert "match the map's art family" in lowered
+    assert "climate" in lowered
+
+
+def test_lighting_treats_lived_in_as_a_distribution_with_named_dark_rooms():
+    """Warm light where people are, deliberate darkness where they are not."""
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-lighting-hierarchy" / "SKILL.md").read_text()
+    lowered = text.lower()
+
+    assert "lived in" in lowered and "distribution" in lowered
+    assert "dark room's reason" in lowered
+    assert "first question round" in lowered
+    assert "wall lantern" in lowered
+
+
+def test_build_loop_reviews_rooms_at_token_zoom_and_checks_taste_early():
+    """Placement defects hide at map scale; a style mismatch found late costs every region."""
+    loop = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    review = (REPOSITORY_ROOT / "skills" / "battlemap-visual-review" / "SKILL.md").read_text()
+    lowered = loop.lower()
+
+    assert "token zoom, object by object" in lowered
+    # the review follows the build rhythm, inside the room phase
+    assert lowered.index("interior rooms, one at a time") < lowered.index(
+        "token zoom, object by object"
+    )
+    assert "first dressed region" in lowered
+    assert "building's class" in lowered
+    assert "climate and culture" in lowered
+    assert "token zoom" in review.lower()

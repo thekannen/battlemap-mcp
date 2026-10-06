@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
 import subprocess
 import sys
@@ -19,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     commands = parser.add_subparsers(dest="command")
     setup = commands.add_parser("setup", help="install client skills and register this launcher")
-    setup.add_argument("--client", required=True, choices=("codex", "claude-code"))
+    setup.add_argument("--client", required=True, choices=("codex", "claude-code", "opencode"))
     setup.add_argument("--server-executable", type=Path, help="durable MCP server launcher")
     for flag in ("--dry-run", "--force", "--yes"):
         setup.add_argument(flag, action="store_true")
@@ -253,6 +254,8 @@ def _launcher(override: Path | None) -> Path:
 def _setup(args: argparse.Namespace) -> int:
     """Install only client-owned skills and register the durable stdio launcher."""
     executable = _launcher(args.server_executable)
+    if args.client == "opencode":
+        return _setup_opencode(args, executable)
     try:
         command = client_config.registration_argv(args.client, executable)
     except ValueError as exc:
@@ -296,6 +299,49 @@ def _setup(args: argparse.Namespace) -> int:
     print(f"Registered battlemap with {args.client}.")
     print("Setup complete. Fully quit and reopen your AI client to load the connection.")
     print("In Dungeondraft, enable Battlemap MCP Bridge and open a map before using it.")
+    return 0
+
+
+def _setup_opencode(args: argparse.Namespace, executable: Path) -> int:
+    """Install skills for OpenCode and show the entry its config needs.
+
+    OpenCode has no command that adds a server, and setup never edits a
+    client's settings file, so the last step is the user's: paste the entry.
+    """
+    try:
+        entry = client_config.opencode_entry(executable)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    destination = installer.opencode_skills_dir()
+    config = client_config.opencode_config_path()
+    plan = installer.plan_codex_skills_install(destination, datetime.now(UTC))
+    print(f"install opencode skills: {destination}")
+    if args.dry_run:
+        return 0
+    if not _confirm(args.yes):
+        return 2
+    try:
+        result = installer.apply_codex_skills_install(plan, force=args.force)
+    except (installer.InstallConflictError, OSError) as exc:
+        print(f"Skills installation failed at {destination}: {exc}", file=sys.stderr)
+        return 1
+    _report_skills("OpenCode", result, executable, args.client)
+    existing = client_config.opencode_registered_command(config)
+    if existing == entry["command"]:
+        print(f"OpenCode already runs this companion as `battlemap` ({config}).")
+        print("Setup complete. Fully quit and reopen OpenCode to load the connection.")
+        return 0
+    if existing is not None:
+        print(f"OpenCode's `battlemap` entry in {config} runs another command:")
+        print(f"  {' '.join(existing)}")
+        print("Replace its command with this companion's:")
+        print(f"  {json.dumps(entry['command'])}")
+        return 1
+    print("OpenCode has no command that adds a server, so add this yourself.")
+    print(f'In {config}, inside "mcp" (create it if missing), add:')
+    print(json.dumps({"battlemap": entry}, indent=2)[1:-1].rstrip())
+    print("Then fully quit and reopen OpenCode, and run: opencode mcp list")
     return 0
 
 

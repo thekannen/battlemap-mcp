@@ -28,3 +28,9 @@ This project builds on [brann-dev/dungeondraft-mcp](https://github.com/brann-dev
   provides.
 - Users are responsible for licensing compliance when they import, distribute,
   or sell content created with any assets.
+- To search your installed asset packs, the companion reads each pack's list
+  of files, `pack.json` and tags on your computer. It never copies or
+  redistributes pack content, and it does not search or preview a pack whose
+  `pack.json` sets `allow_3rd_party_mapping_software_to_read` to `false`.
+- Release downloads include the license notices of the third-party libraries
+  bundled in the companion.

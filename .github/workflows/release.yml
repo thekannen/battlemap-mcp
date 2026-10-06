@@ -72,7 +72,13 @@ jobs:
         with:
           python-version: "3.11"
       - name: Build and smoke-test native companion
-        run: python tools/release.py build --out dist/release --companion
+        shell: bash
+        env:
+          # A tagged Windows build must ship the pinned launcher; a
+          # manual run may build without one, to produce the first of a
+          # new generation.
+          LAUNCHER_PIN: ${{ github.ref_type == 'tag' && runner.os == 'Windows' && '--require-pinned-launcher' || '' }}
+        run: python tools/release.py build --out dist/release --companion --launcher-candidate dist/launcher $LAUNCHER_PIN
       - name: Verify archive after extraction
         shell: bash
         env:
@@ -97,6 +103,15 @@ jobs:
           executable, = (p for p in target.rglob(name) if p.is_file())
           subprocess.run([sys.executable, 'tools/release.py', 'smoke', str(executable)], check=True)
           PY
+      # The freshly built launcher, whether or not it shipped: a new
+      # generation is published from this. See docs/releases.md.
+      - if: runner.os == 'Windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-launcher-candidate
+          path: dist/launcher/*
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.platform }}
@@ -162,11 +177,13 @@ jobs:
 
           ## Install or update
 
-          Download the mod ZIP and the companion for your platform from this
-          release, then follow the [installation guide](https://github.com/thekannen/battlemap-mcp#get-started).
+          Pick one way to connect your AI app: download the mod ZIP and the
+          companion for your platform and follow the [installation guide](https://github.com/thekannen/battlemap-mcp#get-started),
+          or install from Claude: open the `.mcpb` in the Claude desktop app, or
+          install the battlemap-mcp plugin in Claude Code ([how](https://github.com/thekannen/battlemap-mcp#install-from-claude)).
           See [CHANGELOG.md](https://github.com/thekannen/battlemap-mcp/blob/main/CHANGELOG.md) for what changed.
 
           SHA256SUMS covers every download. The Windows companion is unsigned;
-          the macOS companions are signed and notarized.
+          the macOS companions, including those in the `.mcpb`, are signed and notarized.
           NOTES
           gh release create "$RELEASE_TAG" release/* --repo "$GH_REPO" --verify-tag --draft --title "$RELEASE_TAG" --notes-file notes.md

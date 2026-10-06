@@ -44,6 +44,11 @@ variant where feet and wheels go, and a third for damp, moss or stone — and
 blend them where they meet. One texture across the whole map reads as a
 placeholder however well the objects sit on it.
 
+Read the climate from the style bible before choosing any of them. It decides
+the base (sand and flagstone in a dry city, mud and grass in a wet one), how
+much grows and where — in a dry place, green only where someone waters it —
+and whether water is everyday or precious.
+
 1. Use `list_assets` to find only the terrain, water, vegetation and landmark
    families that fit the style bible.
 2. Establish terrain layering with broad ground regions first. Treat water and
@@ -86,6 +91,15 @@ where people move does more for believability than any amount of scattered
 detail, and it is what makes the difference between a building on a map and a
 building in a place.
 
+**A walled property's street is a region of its own.** Plan the far side of
+the wall with a purpose list: who passes (carts, porters, the watch), who
+stops (water-sellers, a beggar, riders at a hitching rail), and what the
+owner gives back to the street (a public fountain by the gate, a lamp, a
+shrine). Give it a carriageway and pavements with ruts turning in at the gate,
+and frontages opposite — a shop, a rival's workshop, a warehouse with a wagon
+backed up. The outside face of the wall is where the household's status shows,
+so dress the street rather than the wall itself.
+
 Work the exterior before the interior when you can: the site decides where the
 doors matter, and a door that turns out to face nothing is expensive to move
 once the rooms behind it are furnished.
@@ -109,6 +123,22 @@ which is what a real verge looks like.
 `path_blender_01` to `04`, in the Paths category, exist for exactly this: drawn
 along a seam they feather one material into the next. Use one where two grounds
 meet and the join still reads as a line someone drew.
+
+## Weathering is sparse brushwork
+
+Ground that has seen weather carries grit, sand or leaf litter where the wind
+and the traffic leave it, not everywhere. Wind piles it against vertical faces
+and into corners: the foot of a wall, a courtyard's corners, the lee of a
+gate, the kerb. Traffic sweeps the middle of a path clean. So weather a hard
+surface with many small `paint_terrain` dabs at low `rate` (about 0.2-0.5),
+of uneven radius, where the material would collect, and save full coverage
+for the verges and open ground outside the walls.
+
+Plan the slots for it when you lay the ground. The base slot 0 cannot take
+paint, so a durable base (flagstone, cobbles) goes in slot 0 and the
+weathering material in a paintable slot from the start, because changing a
+slot's texture later changes everything already painted with it. Weathering is subtle at map
+zoom, so judge it in a screenshot framed at token scale.
 
 ## Caves are carved, not built
 
@@ -164,6 +194,15 @@ reviewing it, and the bridge appeared to cross nothing. `get_status` reporting
 `layers.water: true` only means water exists somewhere; it says nothing about
 whether a viewer can tell.
 
+**Water has to match the map's art family too.** `add_water` draws
+Dungeondraft's own water, with its own look, and beside painterly art a small
+formal pond in it can read as belonging to another map. For small, still,
+formal water — a reflecting pool, a fountain basin, a garden pond — prefer
+the art family's water pattern with `place_pattern`, set inside a stone kerb,
+with the family's lily pads or reeds on it. Keep `add_water` for large or
+moving water, where its shoreline blending earns its place, and compare
+either in a render against the rest of the map.
+
 **Frozen water is a material, not water.** An iced-over stream, a frozen pond
 or a sheet of ice is `paint_material` with a Materials asset such as
 `textures/materials/ice_tile.png`. Its defaults, layer -400 and a smooth edge,
@@ -195,8 +234,28 @@ map will be wrong somewhere.
   door, washing, a cart with its shafts down. One or two of these say more about
   who lives here than another dozen shrubs.
 
+- **A plant on hard ground needs a bed.** Soil, a planter or a kerbed border
+  under every planted cluster on paving; plants straight on flagstone read as
+  pasted on. Shape the bed to the planting — a long rounded rectangle under a
+  hedge row, an irregular oval under a cluster — with `place_pattern` or a
+  soil terrain slot. Fit it to the plants' `opaque_bounds` from `get_element`,
+  which cover the foliage itself; pack art often fills half its canvas, so
+  positions and canvas `bounds` put the bed off centre.
+
 A quiet zone is sparse, not sterile: it still gets tufts and litter, just fewer,
 smaller, and further apart.
+
+**Planting has a register, and it should match who keeps the place.** A
+wealthy or formal property is groomed: clipped hedges, contained beds, plants
+in pots, edges kept. Climbing vines, self-sown growth and plants spilling over
+paving belong to neglect, poverty or the wild, and a heavy hand with them
+makes a cared-for courtyard read as abandoned. Decide the register from the
+owner's status and upkeep, and keep to it.
+
+**Plants never pass through walls.** Painterly bushes and trees render well
+past their named tile, so a row set "along" a wall clips into it. Keep each
+plant's centre at least half its rendered width (`texture_size` times scale)
+from the wall line, then read `crossing_walls` in `validate_placements`.
 
 ## Detail by zone
 

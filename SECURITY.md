@@ -2,8 +2,7 @@
 
 ## Supported versions
 
-Security fixes target `main` and ship in the next release. Use the latest
-release.
+Security fixes ship in the next release. Use the latest release.
 
 ## Report a vulnerability
 
@@ -36,3 +35,13 @@ it does not encrypt traffic. Do not expose its port beyond localhost. This is
 a local, single-user integration and does not protect against administrators or
 malicious software running as the same OS user. See the
 [protocol](docs/PROTOCOL.md) and [privacy policy](docs/PRIVACY.md).
+
+## Downloads
+
+Downloads are published only on this repository's GitHub releases and listed
+in each release's `SHA256SUMS`; check a download against it. The Claude Code
+plugin fetches the `.mcpb` from that release's versioned URL over HTTPS, and
+a fix ships as a new version rather than replacing a published file. The
+Windows companion is a fixed launcher that runs `battlemap-mcp.pkg` from its
+own folder without verifying it, so protect the companion folder as you would
+any installed program.

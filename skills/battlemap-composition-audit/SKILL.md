@@ -45,7 +45,9 @@ canvas is blank or that a region is bare.
    hierarchy together.
 2. Frame the primary interaction with `set_camera` and take an encounter-scale
    `screenshot`. Check token movement, cover, entrances, hazards and local
-   material transitions.
+   material transitions. A clean whole-map read says nothing about placement;
+   that is judged room by room at this scale, as the build loop's interior
+   phase does.
 3. Record an audit card: dominant zone, supporting zones, quiet space, route
    state, focal cue, density contrast, and the single most visible defect at
    each scale. Describe observed locations, not an abstract score.

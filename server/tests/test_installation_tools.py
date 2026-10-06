@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 
 def test_install_tool_returns_a_write_free_preview_by_default(monkeypatch, tmp_path):
     """Tool callers must explicitly opt in before the bridge directory is created."""
@@ -62,3 +64,31 @@ def test_inspection_opt_in_reports_authenticated_location(monkeypatch, tmp_path)
     assert report["live_identity"]["bridge_root"] == str(tmp_path / "executing")
     assert report["live_identity"]["process_id"] == 123
     assert report["latest_log"]["live_verified"] is False
+
+
+def test_the_tool_replaces_an_installed_bridge_only_when_asked(monkeypatch, tmp_path):
+    """An extension or plugin user updates the mod through this tool: there is
+    no Connect file or CLI for them to pass --force with."""
+    from battlemap_mcp import server
+
+    mods_dir = tmp_path / "mods"
+    state = tmp_path / "state"
+    monkeypatch.setattr(server.installer, "default_state_dir", lambda: state)
+    first = server.install_dungeondraft_bridge(str(mods_dir), confirm=True)
+    assert first["changed"] is True
+    bridge = mods_dir / "battlemap-mcp-bridge"
+    marker = bridge / "old-version.txt"
+    marker.write_text("1.1.1")
+
+    preview = server.install_dungeondraft_bridge(str(mods_dir))
+    assert preview["requires_force"] is True and "replace=true" in preview["note"]
+    refused = server.install_dungeondraft_bridge(str(mods_dir), confirm=True)
+    assert "conflict" in refused and marker.exists()
+
+    replaced = server.install_dungeondraft_bridge(str(mods_dir), confirm=True, replace=True)
+    assert replaced["changed"] is True
+    assert not marker.exists()
+    backup = Path(replaced["backup_destination"])
+    assert state in backup.parents
+    assert (backup / "old-version.txt").read_text() == "1.1.1"
+    assert not any(p.name.startswith("battlemap-mcp-bridge.backup") for p in mods_dir.iterdir())

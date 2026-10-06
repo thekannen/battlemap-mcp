@@ -58,6 +58,8 @@ SERVER_FILES = (
     "client_config.py",
     "errors.py",
     "floorplan.py",
+    "handshake.py",
+    "pack_contents.py",
     "installer.py",
     "lifecycle.py",
     "placement.py",
@@ -134,6 +136,15 @@ def check_versions(root, tag=None):
     if len(set(found.values())) != 1:
         raise ValueError(f"Release version mismatch: {found}")
     version = next(iter(found.values()))
+    plugin = json.loads(
+        (root / ".claude-plugin/plugin.json").read_text(encoding="utf-8")
+    )
+    bundle = plugin.get("mcpServers")
+    if bundle is not None and bundle != mcpb_url(version):
+        raise ValueError(
+            f"plugin.json mcpServers is {bundle!r}, not this release's bundle "
+            f"{mcpb_url(version)!r}"
+        )
     if not re.fullmatch(VERSION_RE, version):
         raise ValueError(f"Invalid version: {version}")
     if tag is not None and tag != "v" + version:
@@ -162,6 +173,12 @@ def set_version(root, version):
                 r'("version"\s*:\s*")[^"]+',
                 lambda m: m.group(1) + version,
                 original,
+            )
+        if name == ".claude-plugin/plugin.json":
+            updated = re.sub(
+                r'("mcpServers"\s*:\s*")[^"]+',
+                lambda m: m.group(1) + mcpb_url(version),
+                updated,
             )
         path.write_text(updated, encoding="utf-8", newline="\n")
     market = root / ".claude-plugin/marketplace.json"
@@ -221,6 +238,15 @@ def build_mod(root, out, version):
     return archive
 
 
+# The MCP SDK a frozen companion ships, exactly. pyproject allows any 2.x, and
+# a release used to take whatever was newest on the day it was built: 1.1.0
+# shipped mcp 2.2.0, and a build on 2026-10-05 picked up 2.3.0 unannounced.
+# A new SDK can change what a client sees on connect (see handshake.py for
+# the cold-start failure the 2026-07-28 protocol era brought), so raise this
+# deliberately, and only after a cold-start test in a real client.
+MCP_SDK_PINS = ("mcp==2.2.0", "mcp-types==2.2.0")
+
+
 def dependency_pins(system=None, machine=None):
     """Extra pins for the companion's runtime dependencies on this build host.
 
@@ -230,9 +256,10 @@ def dependency_pins(system=None, machine=None):
     """
     system = system or platform.system()
     machine = (machine or platform.machine()).lower()
+    pins = list(MCP_SDK_PINS)
     if system == "Darwin" and machine in ("x86_64", "amd64"):
-        return ["cryptography>=48,<49"]
-    return []
+        pins.append("cryptography>=48,<49")
+    return pins
 
 
 def run(*args, **kwargs):
@@ -294,7 +321,7 @@ def compile_windows_bootloader(root, python):
     return digest
 
 
-def windows_pyinstaller_args(root, work, version):
+def windows_pyinstaller_args(root, work, launcher):
     """What makes the Windows executable identify itself instead of looking
     like every other PyInstaller build: a version resource, the Knownframe
     icon in place of PyInstaller's default (which unsigned malware shares),
@@ -303,26 +330,33 @@ def windows_pyinstaller_args(root, work, version):
     if not icon.is_file():
         raise ValueError(f"Windows icon missing: {icon}")
     version_file = work / "version_info.txt"
-    version_file.write_text(windows_version_info(version))
+    version_file.write_text(windows_version_info(launcher))
     return ["--version-file", version_file, "--icon", icon, "--noupx"]
 
 
-def windows_version_info(version):
-    """PyInstaller --version-file text: an unlabelled executable scores worse."""
-    numbers = tuple(int(part) for part in version.split("-")[0].split(".")) + (0,)
+def windows_version_info(launcher):
+    """PyInstaller --version-file text: an unlabelled executable scores worse.
+
+    It names the launcher generation, never the release: the launcher is
+    reused across releases, so nothing in it may change per release.
+    """
+    generation = launcher["generation"]
+    numbers = (generation, 0, 0, 0)
+    label = f"launcher {generation} (PyInstaller {launcher['pyinstaller']})"
     strings = {
         "CompanyName": "Knownframe",
         "FileDescription": "battlemap-mcp: MCP server for Dungeondraft",
-        "FileVersion": version,
+        "FileVersion": label,
         "Comments": (
-            "Connects AI assistants to a running Dungeondraft. "
+            "Connects AI assistants to a running Dungeondraft. Runs "
+            "battlemap-mcp.pkg from its own folder. "
             "https://github.com/thekannen/battlemap-mcp"
         ),
         "InternalName": "battlemap-mcp",
         "LegalCopyright": "Copyright (c) 2026 Brandon Florian, thekannen. MIT License.",
         "OriginalFilename": "battlemap-mcp.exe",
         "ProductName": "battlemap-mcp",
-        "ProductVersion": version,
+        "ProductVersion": label,
     }
     table = ", ".join(f"StringStruct({k!r}, {v!r})" for k, v in strings.items())
     return (
@@ -333,6 +367,120 @@ def windows_version_info(version):
         " VarFileInfo([VarStruct('Translation', [1033, 1200])])],\n"
         ")\n"
     )
+
+
+# The pinned Windows launcher.
+#
+# A PyInstaller exe is the bootloader with the whole Python payload appended,
+# so every release had a new hash, and the antivirus reputation the last one
+# had earned, Microsoft's clearance included, started again from zero. In
+# 1.1.0, Microsoft's ML verdict flipped between builds that differed only in
+# the PE timestamp. Windows builds therefore keep the payload OUT of the exe
+# (append_pkg=False: battlemap-mcp.pkg beside it) and ship the same
+# launcher bytes every release, recorded in packaging/windows-launcher.json.
+# A launcher only changes on a PyInstaller upgrade, which bumps its
+# generation; the bootloader and the .pkg format must come from the same
+# PyInstaller, which load_launcher_pin enforces.
+LAUNCHER_PIN = "packaging/windows-launcher.json"
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+def load_launcher_pin(root):
+    """Read and check the pinned launcher record. sha256/url are null until
+    the first launcher of a generation is published."""
+    pin = json.loads((root / LAUNCHER_PIN).read_text(encoding="utf-8"))
+    if not isinstance(pin.get("generation"), int) or pin["generation"] < 1:
+        raise ValueError(f"{LAUNCHER_PIN}: generation must be a positive integer")
+    stamp = pin.get("build_timestamp")
+    if not isinstance(stamp, int) or stamp <= 0:
+        raise ValueError(f"{LAUNCHER_PIN}: build_timestamp must be an integer")
+    requirements = (root / "packaging/build-requirements.txt").read_text()
+    (pyinstaller,) = (
+        line.strip().split("==", 1)[1]
+        for line in requirements.splitlines()
+        if line.strip().lower().startswith("pyinstaller==")
+    )
+    if pin.get("pyinstaller") != pyinstaller:
+        raise ValueError(
+            f"{LAUNCHER_PIN} is for PyInstaller {pin.get('pyinstaller')}, but the "
+            f"build pins {pyinstaller}. A launcher only runs the .pkg format of its "
+            "own PyInstaller: bump the generation, clear sha256 and url, and "
+            "publish a new launcher."
+        )
+    digest, url = pin.get("sha256"), pin.get("url")
+    if (digest is None) != (url is None):
+        raise ValueError(f"{LAUNCHER_PIN}: set sha256 and url together")
+    if digest is not None and not SHA256_HEX.fullmatch(digest):
+        raise ValueError(f"{LAUNCHER_PIN}: sha256 must be 64 lowercase hex digits")
+    if url is not None and not url.startswith("https://github.com/"):
+        raise ValueError(f"{LAUNCHER_PIN}: url must be a GitHub release download")
+    return pin
+
+
+def windows_spec(spec):
+    """Rewrite a generated spec so the payload ships beside the exe."""
+    text = spec.read_text(encoding="utf-8")
+    anchor = "    exclude_binaries=True,\n"
+    if text.count(anchor) != 1:
+        raise ValueError("generated spec has no single EXE(exclude_binaries=True)")
+    spec.write_text(
+        text.replace(anchor, anchor + "    append_pkg=False,\n"), encoding="utf-8"
+    )
+
+
+def pinned_launcher_bytes(pin, launcher_file=None):
+    """The pinned launcher, from a local copy or its release URL, by hash."""
+    if launcher_file is not None:
+        data = Path(launcher_file).read_bytes()
+    else:
+        import urllib.request
+
+        with urllib.request.urlopen(pin["url"], timeout=60) as response:
+            data = response.read()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != pin["sha256"]:
+        raise ValueError(
+            f"pinned launcher hash mismatch: got {digest}, {LAUNCHER_PIN} says "
+            f"{pin['sha256']}"
+        )
+    return data
+
+
+def pin_windows_launcher(
+    bundle, pin, launcher_file=None, require=False, candidate_dir=None
+):
+    """Swap the freshly built launcher for the pinned one.
+
+    The fresh one is kept in candidate_dir when given: it is what a new
+    generation is published from. Returns a short description of what
+    shipped.
+    """
+    executable = bundle / "battlemap-mcp.exe"
+    package = bundle / "battlemap-mcp.pkg"
+    if not package.is_file():
+        raise ValueError("Windows build has no battlemap-mcp.pkg beside the exe")
+    built = executable.read_bytes()
+    built_digest = hashlib.sha256(built).hexdigest()
+    print(f"built Windows launcher: {built_digest} ({len(built)} bytes)")
+    if candidate_dir is not None:
+        candidate_dir = Path(candidate_dir)
+        candidate_dir.mkdir(parents=True, exist_ok=True)
+        (candidate_dir / "battlemap-mcp.exe").write_bytes(built)
+        (candidate_dir / "SHA256").write_text(
+            f"{built_digest}  battlemap-mcp.exe\n", encoding="utf-8"
+        )
+    if pin["sha256"] is None:
+        if require:
+            raise ValueError(
+                f"{LAUNCHER_PIN} pins no launcher, and this build requires one. "
+                "Publish a launcher first; see docs/releases.md."
+            )
+        print("WARNING: no pinned launcher; shipping the freshly built one")
+        return f"unpinned {built_digest}"
+    executable.write_bytes(pinned_launcher_bytes(pin, launcher_file))
+    same = "identical to" if built_digest == pin["sha256"] else "replacing"
+    print(f"pinned Windows launcher {pin['sha256']} ({same} the fresh build)")
+    return f"pinned {pin['sha256']}"
 
 
 # macOS notarization.
@@ -435,8 +583,16 @@ def validate_companion_links(bundle):
             raise ValueError(f"Companion symlink escapes archive: {path.name}")
 
 
-def smoke(executable):
+def smoke(executable, via=None):
+    """Check a frozen companion's payload, version, CLI and MCP startup.
+
+    via: start it through this command instead, e.g. ["/bin/sh", launch.sh]
+    for an MCP bundle; the payload is still checked beside `executable`.
+    """
     executable = executable.resolve()
+    command = [str(part) for part in via] if via else [str(executable)]
+    if executable.suffix.lower() == ".exe" and not via:
+        check_windows_launcher(executable)
     payloads = list(executable.parent.rglob("bridge_payload/battlemap-mcp-bridge"))
     if len(payloads) != 1:
         raise ValueError("Frozen bridge payload missing or duplicated")
@@ -466,12 +622,12 @@ def smoke(executable):
         ):
             env[key] = scratch
         version = subprocess.check_output(
-            [str(executable), "--version"], cwd=scratch, env=env, text=True, timeout=30
+            [*command, "--version"], cwd=scratch, env=env, text=True, timeout=30
         )
         if version.strip() != f"battlemap-mcp {check_versions(ROOT)}":
             raise ValueError(f"Unexpected frozen version: {version}")
         invalid = subprocess.run(
-            [str(executable), "invalid-release-smoke-command"],
+            [*command, "invalid-release-smoke-command"],
             cwd=scratch,
             env=env,
             capture_output=True,
@@ -496,7 +652,7 @@ def smoke(executable):
         ]
         with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errors:
             process = subprocess.Popen(
-                [str(executable)],
+                command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=errors,
@@ -542,11 +698,29 @@ def smoke(executable):
                 reader.join(timeout=5)
 
 
+def check_windows_launcher(executable):
+    """A Windows bundle is the launcher plus its .pkg, and when a launcher is
+    pinned the shipped exe must be exactly it. Smoke runs again on the
+    extracted archive, so this also gates what users download."""
+    if not executable.with_suffix(".pkg").is_file():
+        raise ValueError(
+            f"{executable.with_suffix('.pkg').name} missing beside the exe"
+        )
+    pin = load_launcher_pin(ROOT)
+    if pin["sha256"] is not None:
+        digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+        if digest != pin["sha256"]:
+            raise ValueError(
+                f"shipped launcher {digest} is not the pinned {pin['sha256']}"
+            )
+
+
 def write_shortcuts(bundle, system):
     """Create clickable entry points without changing PATH or installing runtimes."""
     actions = {
         "Connect Codex": "setup --client codex --yes",
         "Connect Claude Code": "setup --client claude-code --yes",
+        "Connect OpenCode": "setup --client opencode --yes",
         "Check connection": "doctor --live --brief",
     }
     for name, arguments in actions.items():
@@ -574,7 +748,15 @@ def write_shortcuts(bundle, system):
 
 
 def build(
-    root, out, companion=False, tag=None, sign_identity=None, notary_profile=None
+    root,
+    out,
+    companion=False,
+    tag=None,
+    sign_identity=None,
+    notary_profile=None,
+    launcher_file=None,
+    require_pinned_launcher=False,
+    launcher_candidate=None,
 ):
     if sign_identity or notary_profile:
         # Check this first: discovering it after a multi-minute build is the
@@ -589,6 +771,9 @@ def build(
                 "unsigned bundle always comes back Invalid"
             )
     version = check_versions(root, tag)
+    windows = companion and os.name == "nt"
+    # Read the pin before a multi-minute build, so a stale one fails first.
+    launcher = load_launcher_pin(root) if windows else None
     out = out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     artifacts = [build_mod(root, out, version)]
@@ -628,7 +813,7 @@ def build(
             "-r",
             root / "packaging/build-requirements.txt",
         )
-        if companion and os.name == "nt":
+        if windows:
             compile_windows_bootloader(root, python)
         run(
             python,
@@ -681,14 +866,12 @@ def build(
                 "if __name__ == '__main__':\n    raise SystemExit(main())\n"
             )
             windows_args = (
-                windows_pyinstaller_args(root, work, version) if os.name == "nt" else []
+                windows_pyinstaller_args(root, work, launcher) if windows else []
             )
             run(
                 python,
                 "-m",
-                "PyInstaller",
-                "--noconfirm",
-                "--clean",
+                "PyInstaller.utils.cliutils.makespec",
                 "--onedir",
                 "--name",
                 "battlemap-mcp",
@@ -698,20 +881,45 @@ def build(
                 "mcp",
                 "--copy-metadata",
                 "battlemap-mcp",
-                "--distpath",
-                work / "dist",
-                "--workpath",
-                work / "build",
                 "--specpath",
                 work,
                 *windows_args,
                 entry,
                 cwd=work,
             )
+            spec = work / "battlemap-mcp.spec"
+            environment_vars = os.environ.copy()
+            if windows:
+                windows_spec(spec)
+                # A fixed PE timestamp, so CI rebuilds a byte-identical
+                # launcher while its toolchain is unchanged.
+                environment_vars["SOURCE_DATE_EPOCH"] = str(launcher["build_timestamp"])
+            run(
+                python,
+                "-m",
+                "PyInstaller",
+                "--noconfirm",
+                "--clean",
+                "--distpath",
+                work / "dist",
+                "--workpath",
+                work / "build",
+                spec,
+                cwd=work,
+                env=environment_vars,
+            )
             bundle = work / "dist/battlemap-mcp"
             for provenance in bundle.rglob("direct_url.json"):
                 # pip records the temporary wheel path; it is not runtime metadata.
                 provenance.unlink()
+            if windows:
+                pin_windows_launcher(
+                    bundle,
+                    launcher,
+                    launcher_file,
+                    require_pinned_launcher,
+                    launcher_candidate,
+                )
             shutil.copy2(root / "LICENSE", bundle / "LICENSE")
             python_license = python_runtime_license()
             shutil.copy2(python_license, bundle / "PYTHON-LICENSE.txt")
@@ -776,6 +984,281 @@ def build(
     return artifacts
 
 
+# MCP bundle (.mcpb): one file that is both a Claude Desktop extension and the
+# MCP server of the Claude Code plugin (#23). It carries every platform's
+# companion, because a plugin names ONE bundle URL and Desktop's
+# platform_overrides are keyed by OS, not architecture.
+#
+# Measured in the 2026-09-25 spike: Claude Code's extraction turns symlinks
+# into small text files holding the target, which left PyInstaller's
+# bootloader unable to load Python; replacing them with real files broke the
+# macOS code signature ("code signature invalid"); re-signing that layout with
+# the Developer ID worked. So: no symlinks, macOS trees signed AFTER the copy.
+MCPB_PLATFORMS = ("windows-x64", "macos-arm64", "macos-x64", "linux-x64")
+MCPB_LAUNCHER = """#!/bin/sh
+# Start this computer's companion. exec replaces the shell, so the AI client
+# stays the companion's parent and its exit watchdog still sees it.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1
+case "$(uname -s)" in
+Darwin)
+    # hw.optional.arm64 is 1 on Apple silicon even under Rosetta.
+    if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] && [ -d "$here/macos-arm64" ]; then
+        platform=macos-arm64
+    else
+        platform=macos-x64
+    fi ;;
+Linux)
+    case "$(uname -m)" in
+    x86_64 | amd64) platform=linux-x64 ;;
+    *) echo "battlemap-mcp: no companion for Linux on $(uname -m)" >&2; exit 1 ;;
+    esac ;;
+*) echo "battlemap-mcp: no companion for $(uname -s)" >&2; exit 1 ;;
+esac
+companion="$here/$platform/battlemap-mcp"
+if [ ! -f "$companion" ]; then
+    echo "battlemap-mcp: this bundle has no $platform companion" >&2
+    exit 1
+fi
+# Some extractors drop the execute bit; the file is ours to fix.
+[ -x "$companion" ] || chmod u+x "$companion" 2>/dev/null
+exec "$companion" "$@"
+"""
+
+
+def mcpb_name(version):
+    return f"battlemap-mcp-{version}.mcpb"
+
+
+def mcpb_url(version):
+    """Where a published release keeps its bundle; plugin.json points here."""
+    return (
+        "https://github.com/thekannen/battlemap-mcp/releases/download/"
+        f"v{version}/{mcpb_name(version)}"
+    )
+
+
+def mcpb_manifest(version, platforms):
+    os_of = {"windows": "win32", "macos": "darwin", "linux": "linux"}
+    oses = sorted({os_of[name.split("-")[0]] for name in platforms})
+    config = {
+        "command": "/bin/sh",
+        "args": ["${__dirname}/server/launch.sh"],
+        "env": {},
+    }
+    if "windows-x64" in platforms:
+        config["platform_overrides"] = {
+            "win32": {
+                "command": "${__dirname}/server/windows-x64/battlemap-mcp.exe",
+                "args": [],
+            }
+        }
+    return {
+        "manifest_version": "0.3",
+        "name": "battlemap",
+        "display_name": "battlemap-mcp",
+        "version": version,
+        "description": (
+            "Build battle maps in a running Dungeondraft: walls, floors, terrain, "
+            "lighting and objects, with screenshots so the assistant sees its work."
+        ),
+        "long_description": (
+            "Needs Dungeondraft 1.2.0.1 with the bridge mod installed and a map "
+            "open. Ask the assistant to install the bridge: the companion carries "
+            "it and shows what it will change before it does."
+        ),
+        "author": {
+            "name": "thekannen",
+            "url": "https://github.com/thekannen/battlemap-mcp",
+        },
+        "homepage": "https://github.com/thekannen/battlemap-mcp",
+        "repository": {
+            "type": "git",
+            "url": "https://github.com/thekannen/battlemap-mcp",
+        },
+        "license": "MIT",
+        "icon": "icon.png",
+        "keywords": ["battlemap", "battle map", "ttrpg", "map"],
+        "server": {
+            "type": "binary",
+            "entry_point": "server/launch.sh",
+            "mcp_config": config,
+        },
+        "tools_generated": True,
+        "compatibility": {"platforms": oses},
+    }
+
+
+def _replace_symlinks(tree, drop_frameworks=False):
+    """Copy each symlink's target in place of the link, deepest first.
+
+    drop_frameworks (macOS): a framework copied without its symlinks has real
+    files at its root and in Versions/, and codesign then refuses it as
+    "bundle format is ambiguous" (measured 2026-10-05). PyInstaller's bootloader
+    loads _internal/Python, a link INTO Python.framework, so that link gets the
+    real library and the framework directory is removed. Verified: all 91
+    Mach-O files re-signed, and the companion answered MCP initialize.
+    """
+    links = sorted(
+        (p for p in tree.rglob("*") if p.is_symlink()),
+        key=lambda p: len(p.parts),
+        reverse=True,
+    )
+    frameworks = [
+        p for p in tree.rglob("*.framework") if p.is_dir() and not p.is_symlink()
+    ]
+    for link in links:
+        inside = any(link.is_relative_to(fw) for fw in frameworks)
+        if drop_frameworks and inside:
+            continue
+        target = link.resolve()
+        if not target.is_relative_to(tree.resolve()):
+            raise ValueError(f"symlink escapes the companion: {link}")
+        link.unlink()
+        if target.is_dir():
+            shutil.copytree(target, link, symlinks=False)
+        else:
+            shutil.copy2(target, link)
+    if drop_frameworks:
+        for framework in frameworks:
+            shutil.rmtree(framework)
+    leftover = [p for p in tree.rglob("*") if p.is_symlink()]
+    if leftover:
+        raise ValueError(f"symlinks remain after copying: {leftover[:3]}")
+
+
+def _extract_companion(archive, destination):
+    staging = destination.parent / (destination.name + "-staging")
+    staging.mkdir()
+    if archive.name.endswith(".zip"):
+        with zipfile.ZipFile(archive) as bundle:
+            bundle.extractall(staging)
+    else:
+        with tarfile.open(archive) as bundle:
+            bundle.extractall(staging, filter="data")
+    (root,) = [p for p in staging.iterdir() if p.is_dir()]
+    root.rename(destination)
+    staging.rmdir()
+
+
+def build_mcpb(
+    companions,
+    out,
+    version,
+    platforms=MCPB_PLATFORMS,
+    sign_identity=None,
+    notary_profile=None,
+    allow_unnotarized=False,
+):
+    """Assemble one .mcpb from the release's companion archives."""
+    macos = [p for p in platforms if p.startswith("macos")]
+    if macos:
+        if platform.system() != "Darwin":
+            raise ValueError("a bundle with macOS companions must be built on a Mac")
+        if not sign_identity:
+            raise ValueError(
+                "the macOS companions must be re-signed once their symlinks are "
+                "copied; pass --sign-identity"
+            )
+        if not notary_profile and not allow_unnotarized:
+            raise ValueError(
+                "pass --notary-profile, or --allow-unnotarized for a local test "
+                "bundle that must never be published"
+            )
+    out = out.resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    target = out / mcpb_name(version)
+    if target.exists():
+        raise ValueError(f"{target.name} already exists")
+    with tempfile.TemporaryDirectory(prefix="dd-mcp-mcpb-") as temporary:
+        work = Path(temporary)
+        stage = work / "bundle"
+        server_dir = stage / "server"
+        server_dir.mkdir(parents=True)
+        for name in platforms:
+            if name not in MCPB_PLATFORMS:
+                raise ValueError(f"unknown platform {name}")
+            ext = "zip" if name.startswith("windows") else "tar.gz"
+            archive = companions / f"battlemap-mcp-companion-{version}-{name}.{ext}"
+            if not archive.is_file():
+                raise ValueError(f"companion archive missing: {archive.name}")
+            tree = server_dir / name
+            _extract_companion(archive, tree)
+            _replace_symlinks(tree, drop_frameworks=name.startswith("macos"))
+            if name.startswith("macos"):
+                signed = sign_bundle(tree, sign_identity)
+                print(f"{name}: re-signed {signed} Mach-O file(s)")
+                if notary_profile:
+                    submission = notarize_bundle(tree, work, notary_profile)
+                    submission.unlink(missing_ok=True)
+                    print(f"{name}: notarization accepted")
+        launcher = server_dir / "launch.sh"
+        launcher.write_text(MCPB_LAUNCHER, encoding="utf-8", newline="\n")
+        launcher.chmod(0o755)
+        shutil.copy2(root_icon(), stage / "icon.png")
+        (stage / "manifest.json").write_text(
+            json.dumps(mcpb_manifest(version, platforms), indent=2) + "\n",
+            encoding="utf-8",
+        )
+        partial = work / target.name
+        with zipfile.ZipFile(partial, "w", zipfile.ZIP_DEFLATED) as bundle:
+            for path in sorted(stage.rglob("*")):
+                if path.is_dir():
+                    continue
+                info = zipfile.ZipInfo.from_file(
+                    path, path.relative_to(stage).as_posix()
+                )
+                # Keep the Unix mode, execute bits included: the extractors
+                # that honour it then need no chmod.
+                info.external_attr = (path.stat().st_mode & 0xFFFF) << 16
+                info.compress_type = zipfile.ZIP_DEFLATED
+                with path.open("rb") as source, bundle.open(info, "w") as sink:
+                    shutil.copyfileobj(source, sink, 1024 * 1024)
+        shutil.move(str(partial), target)
+    smoke_mcpb(target)
+    return target
+
+
+def root_icon():
+    icon = ROOT / "mod" / MOD_ROOT / "icons/mcp_bridge.png"
+    if not icon.is_file():
+        raise ValueError(f"bundle icon missing: {icon}")
+    return icon
+
+
+def smoke_mcpb(bundle_path):
+    """Unpack a bundle the way a client does and start this computer's companion."""
+    with tempfile.TemporaryDirectory(prefix="dd-mcp-mcpb-smoke-") as temporary:
+        root = Path(temporary)
+        with zipfile.ZipFile(bundle_path) as bundle:
+            bundle.extractall(root)
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        if manifest.get("version") != check_versions(ROOT):
+            raise ValueError(
+                f"bundle version {manifest.get('version')} is not this release"
+            )
+        if any(p.is_symlink() for p in root.rglob("*")):
+            raise ValueError("bundle contains symlinks")
+        system = platform.system()
+        if system == "Windows":
+            executable = root / "server/windows-x64/battlemap-mcp.exe"
+            if executable.is_file():
+                smoke(executable)
+                return
+        else:
+            native = {
+                ("Darwin", "arm64"): "macos-arm64",
+                ("Darwin", "x86_64"): "macos-x64",
+                ("Linux", "x86_64"): "linux-x64",
+            }.get((system, platform.machine()))
+            executable = root / "server" / str(native) / "battlemap-mcp"
+            if native and executable.is_file():
+                # zipfile drops the mode bits, as some clients' extractors do:
+                # the launcher has to cope, so it is not helped here.
+                smoke(executable, via=["/bin/sh", root / "server/launch.sh"])
+                return
+        print("bundle carries no companion for this computer; not started")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -805,8 +1288,40 @@ def main():
         ),
     )
     package.add_argument("--tag")
+    package.add_argument(
+        "--launcher",
+        type=Path,
+        help=(
+            "Windows: a local copy of the pinned launcher, used instead of "
+            "downloading it. Its hash is still checked."
+        ),
+    )
+    package.add_argument(
+        "--require-pinned-launcher",
+        action="store_true",
+        help="Windows: fail unless packaging/windows-launcher.json pins a launcher.",
+    )
+    package.add_argument(
+        "--launcher-candidate",
+        type=Path,
+        help="Windows: keep the freshly built launcher and its hash here.",
+    )
     verify = commands.add_parser("smoke")
     verify.add_argument("executable", type=Path)
+    bundle = commands.add_parser(
+        "mcpb", help="assemble the MCP bundle from the release's companion archives"
+    )
+    bundle.add_argument("--companions", type=Path, required=True)
+    bundle.add_argument("--out", type=Path, required=True)
+    bundle.add_argument("--tag")
+    bundle.add_argument("--platform", action="append", choices=MCPB_PLATFORMS)
+    bundle.add_argument("--sign-identity", default=os.environ.get("DD_SIGN_IDENTITY"))
+    bundle.add_argument("--notary-profile", default=os.environ.get("DD_NOTARY_PROFILE"))
+    bundle.add_argument(
+        "--allow-unnotarized",
+        action="store_true",
+        help="local test bundle only; never publish one",
+    )
     args = parser.parse_args()
     if args.command == "check":
         print(check_versions(ROOT, args.tag))
@@ -814,6 +1329,18 @@ def main():
         set_version(ROOT, args.version)
     elif args.command == "smoke":
         smoke(args.executable)
+    elif args.command == "mcpb":
+        print(
+            build_mcpb(
+                args.companions,
+                args.out,
+                check_versions(ROOT, args.tag),
+                tuple(args.platform or MCPB_PLATFORMS),
+                args.sign_identity,
+                args.notary_profile,
+                args.allow_unnotarized,
+            )
+        )
     else:
         for artifact in build(
             ROOT,
@@ -822,6 +1349,9 @@ def main():
             args.tag,
             args.sign_identity,
             args.notary_profile,
+            args.launcher,
+            args.require_pinned_launcher,
+            args.launcher_candidate,
         ):
             print(artifact)
 

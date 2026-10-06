@@ -354,6 +354,12 @@ class Uat:
             self.failed.append((name, f"engine log: {errs[0].strip()[:120]}"))
             print(f"  DIRTY {name}\n          {detail}\n          LOG! {errs[0].strip()[:120]}")
             return
+        if detail.startswith("skipped: "):
+            # The case found nothing to test here (no packs, no snapping);
+            # counting it as a pass made a run look more complete than it was.
+            self.skipped.append((name, detail.removeprefix("skipped: ")))
+            print(f"  SKIP  {name}  — {detail.removeprefix('skipped: ')}")
+            return
         self.passed.append(name)
         print(f"  PASS  {name}" + (f"  — {detail}" if detail else ""))
 

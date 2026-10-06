@@ -11,7 +11,7 @@ distinction is the whole design:
 - a tankard on a table, bread on a bench, a lantern on a post — LEGITIMATE.
   Objects overlapping each other is how dressing a surface works, and reporting
   it would bury the real findings under every correctly-dressed table in the
-  map. Object-versus-object is deliberately not checked at all.
+  map. Object-versus-object is deliberately not a defect here.
 - an object straddling a wall, or sitting in a doorway or across a window —
   DEFECTS. That is architecture, and furniture does not pass through it.
 
@@ -20,6 +20,10 @@ bounds are not: a hearth turned -90 degrees reports a 714-wide box for a
 350-wide footprint, so a checker built on those would flag every rotated object
 on the map and be worth nothing.
 
+The advice checks further down (stacks, adrift fixtures, surface overflow,
+lone kit parts) do compare objects with each other, but each one only for a
+narrow, named pattern, and none of them changes `ok`.
+
 Everything here is pure geometry over what the bridge already returns. Nothing
 is placed, moved or changed.
 """
@@ -27,6 +31,7 @@ is placed, moved or changed.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 
 # How far an object may cross a wall's centre line before it counts as
@@ -115,6 +120,49 @@ def box_for(element: dict) -> Box | None:
         half_h=height / 2.0,
         rotation_deg=float(element.get("rotation") or 0.0),
     )
+
+
+def opaque_box_for(element: dict) -> Box | None:
+    """The footprint of an object's visible pixels, not its whole canvas.
+
+    The bridge reports `opaque_rect` as [x, y, w, h] in texture pixels. Its
+    centre is offset from the canvas centre, and that offset turns and scales
+    with the object. None when the bridge sent no rect.
+    """
+    box = box_for(element)
+    rect = element.get("opaque_rect")
+    size = element.get("texture_size")
+    if box is None or not rect or not size or len(rect) < 4:
+        return None
+    if float(rect[2]) <= 0 or float(rect[3]) <= 0:
+        return None
+    scale = float(element.get("scale") or 1.0)
+    magnitude = abs(scale)
+    # A mirrored object (negative scale) carries its art's offset to the other side.
+    off_x = (float(rect[0]) + float(rect[2]) / 2.0 - float(size[0]) / 2.0) * scale
+    off_y = (float(rect[1]) + float(rect[3]) / 2.0 - float(size[1]) / 2.0) * magnitude
+    theta = math.radians(box.rotation_deg)
+    return Box(
+        cx=box.cx + off_x * math.cos(theta) - off_y * math.sin(theta),
+        cy=box.cy + off_x * math.sin(theta) + off_y * math.cos(theta),
+        half_w=float(rect[2]) * magnitude / 2.0,
+        half_h=float(rect[3]) * magnitude / 2.0,
+        rotation_deg=box.rotation_deg,
+    )
+
+
+def add_bounds(element: dict) -> dict:
+    """Give an element `bounds` and, when known, `opaque_bounds`: [x0, y0, x1, y1]
+    in woxels, after scale and rotation. The opaque ones are what the art
+    actually covers, which is what a bed, rug or shadow should be fitted to."""
+    box = box_for(element)
+    if box is not None:
+        element["bounds"] = [round(v, 1) for v in box.bounds()]
+    opaque = opaque_box_for(element)
+    if opaque is not None:
+        element["opaque_bounds"] = [round(v, 1) for v in opaque.bounds()]
+    element.pop("opaque_rect", None)
+    return element
 
 
 @dataclass(frozen=True)
@@ -346,7 +394,14 @@ WALL_FIXTURES = (
     "mirror",
     "hearth",
     "fireplace",
+    "chimney",
+    "curtain",
+    "window",
 )
+
+# Name PREFIXES for the same: Wall_Lantern, Wall_Shelf and the like. A prefix,
+# not a substring, so a ruin's `broken_wall_03` rubble is not taken for one.
+WALL_FIXTURE_PREFIXES = ("wall_",)
 
 # A wall fixture may sit this far from a wall's centre line and still be
 # mounted: the wall has thickness and the object has depth.
@@ -492,7 +547,10 @@ def find_adrift_fixtures(
     for element in objects:
         asset = str(element.get("asset", ""))
         name = asset.rsplit("/", 1)[-1].lower()
-        if not any(fixture in name for fixture in WALL_FIXTURES):
+        if not (
+            any(fixture in name for fixture in WALL_FIXTURES)
+            or name.startswith(WALL_FIXTURE_PREFIXES)
+        ):
             continue
         box = box_for(element)
         if box is None:
@@ -507,4 +565,164 @@ def find_adrift_fixtures(
                     "woxels_from_wall": round(nearest),
                 }
             )
+    return found
+
+
+# --- a dressed surface: what sits on a table stays on the table -------------
+
+# Furniture whose top is dressed. Name-based like WALL_FIXTURES, so a finding
+# is a prompt to look: an oddly named sideboard is missed.
+SURFACE_NAMES = (
+    "table",
+    "desk",
+    "counter",
+    "workbench",
+    "dresser",
+    "nightstand",
+    "sideboard",
+)
+
+# Dressing sits a layer or two above its surface. Anything far higher is a
+# ceiling fixture, a beam or a cap hanging over the table, not standing on it.
+SURFACE_DRESSING_LAYERS = 300
+
+# How far an item's corner may pass the surface's edge before it overhangs. A
+# plate's rim over a table's edge is drawn that way; a book pile half off it
+# is not.
+SURFACE_OVERHANG = 16.0
+
+
+def _name(element: dict) -> str:
+    return str(element.get("asset", "")).rsplit("/", 1)[-1].lower()
+
+
+def _layer(element: dict) -> int:
+    try:
+        return int(element.get("layer", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def find_surface_overflow(objects: list[dict], *, overhang: float = SURFACE_OVERHANG) -> list[dict]:
+    """Dressing that hangs off the surface it stands on, or outgrows it.
+
+    An item counts as ON a surface when its centre lies inside the surface's
+    footprint and it sits one to three layers above it — which is how the
+    skills tell a model to stack a cup on a table. Reported when one of its
+    corners reaches past every surface it stands on: a book pile wider than its
+    table, a board over the table edge, a candle off the desk. Advice: a cloth
+    drawn to drape over the edge is reported too, so look before moving it.
+    """
+    measured = [(element, box_for(element)) for element in objects]
+    surfaces = [
+        (element, box)
+        for element, box in measured
+        if box is not None and any(word in _name(element) for word in SURFACE_NAMES)
+    ]
+    if not surfaces:
+        return []
+    found: list[dict] = []
+    for item, item_box in measured:
+        if item_box is None:
+            continue
+        item_layer = _layer(item)
+        below = [
+            (surface, box)
+            for surface, box in surfaces
+            if surface is not item and 0 < item_layer - _layer(surface) <= SURFACE_DRESSING_LAYERS
+        ]
+        holders = [
+            (surface, box)
+            for surface, box in below
+            if box.distance_to(item_box.cx, item_box.cy) == 0.0
+        ]
+        if not holders:
+            continue
+        # Each corner may rest on any surface below it: two tables pushed
+        # together hold a runner laid across the join.
+        past = max(min(box.distance_to(x, y) for _, box in below) for x, y in item_box.corners())
+        if past <= overhang:
+            continue
+        surface, box = holders[0]
+        found.append(
+            {
+                "id": int(item.get("id", -1)),
+                "asset": str(item.get("asset", "")),
+                "surface_id": int(surface.get("id", -1)),
+                "surface_asset": str(surface.get("asset", "")),
+                "overhang_woxels": round(past),
+                "larger_than_surface": item_box.half_w * item_box.half_h >= box.half_w * box.half_h,
+            }
+        )
+    return found
+
+
+# --- multi-part kits: one part on its own reads as broken -------------------
+
+# Some packs draw one piece of furniture as several assets meant to be stacked:
+# bedding over a frame, a chimney breast over a hearth slab, a curtain on its
+# rod. Each rule is (what the part is, a pattern for the part, a pattern for
+# the sibling it needs nearby). Matched on the file name, lower-cased.
+KIT_RULES: tuple[tuple[str, str, str], ...] = (
+    ("bedding without a bed frame", r"bed_?blanket", r"^(?!.*blanket).*bed(?!side|roll)"),
+    ("hearth base without its chimney", r"fireplace.*base", r"fireplace.*chimney"),
+    ("chimney without its hearth base", r"fireplace.*chimney", r"fireplace.*base"),
+    ("globe without its stand", r"globe.*(?:metal|ring)", r"globe.*brace"),
+    ("curtain without its rod", r"curtain.*cloth", r"curtain.*rod"),
+    ("window frame without its sill", r"window_frame", r"window_sill"),
+)
+
+# How far the sibling may stand from the part: the pieces of a kit overlap, so
+# anything a tile away is not the same piece of furniture.
+KIT_REACH = 128.0
+
+
+def _near(one: dict, two: dict, reach: float) -> bool:
+    box_one, box_two = box_for(one), box_for(two)
+    if box_one is not None and box_two is not None:
+        return (
+            min(
+                box_one.distance_to(box_two.cx, box_two.cy),
+                box_two.distance_to(box_one.cx, box_one.cy),
+            )
+            <= reach
+        )
+    first, second = one.get("position") or [], two.get("position") or []
+    if len(first) < 2 or len(second) < 2:
+        return False
+    return (
+        math.hypot(float(first[0]) - float(second[0]), float(first[1]) - float(second[1]))
+        <= reach + 128.0
+    )
+
+
+def find_lone_kit_parts(objects: list[dict], *, reach: float = KIT_REACH) -> list[dict]:
+    """Parts of a multi-piece fixture placed without the piece they belong with.
+
+    Bedding alone looks like a comforter on the floor; a hearth slab alone is a
+    pale block off the wall; a curtain without its rod renders as a squiggle.
+    Name-based, so it only knows the kits in KIT_RULES: read it as a prompt.
+    """
+    compiled = [
+        (label, re.compile(part), re.compile(sibling)) for label, part, sibling in KIT_RULES
+    ]
+    named = [(element, _name(element)) for element in objects]
+    found: list[dict] = []
+    for element, name in named:
+        for label, part, sibling in compiled:
+            if not part.search(name):
+                continue
+            if any(
+                other is not element and sibling.search(other_name) and _near(element, other, reach)
+                for other, other_name in named
+            ):
+                continue
+            found.append(
+                {
+                    "id": int(element.get("id", -1)),
+                    "asset": str(element.get("asset", "")),
+                    "missing": label,
+                }
+            )
+            break
     return found

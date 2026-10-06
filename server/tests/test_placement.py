@@ -266,3 +266,36 @@ def test_ordinary_furniture_at_the_same_depth_still_crosses():
     chair = obj(23, 500, 1020, 200, 100)
     report = find_intrusions([chair], [NORTH_WALL], [])
     assert ids(report["crossing_walls"]) == [23]
+
+
+def test_bounds_follow_scale_and_rotation():
+    from battlemap_mcp.placement import add_bounds
+
+    element = {"position": [1000, 1000], "texture_size": [200, 100], "scale": 2, "rotation": 90}
+    assert add_bounds(element)["bounds"] == [900.0, 800.0, 1100.0, 1200.0]
+    assert "opaque_bounds" not in element
+
+
+def test_opaque_bounds_cover_the_art_not_the_canvas():
+    """Runtime behavior and validation."""
+    from battlemap_mcp.placement import add_bounds
+
+    element = {
+        "position": [1000, 1000],
+        "texture_size": [200, 100],
+        "scale": 2,
+        "rotation": 0,
+        "opaque_rect": [100, 0, 100, 100],
+    }
+    add_bounds(element)
+    assert element["opaque_bounds"] == [1000.0, 900.0, 1200.0, 1100.0]
+    assert "opaque_rect" not in element
+    # Turned a quarter, the art's offset turns with it: it now lies below.
+    element = dict(element, rotation=90, opaque_rect=[100, 0, 100, 100])
+    del element["opaque_bounds"]
+    add_bounds(element)
+    assert element["opaque_bounds"] == [900.0, 1000.0, 1100.0, 1200.0]
+    # Mirrored, it lies on the left.
+    element = dict(element, rotation=0, scale=-2, opaque_rect=[100, 0, 100, 100])
+    add_bounds(element)
+    assert element["opaque_bounds"] == [800.0, 900.0, 1000.0, 1100.0]

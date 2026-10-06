@@ -33,7 +33,17 @@ from mcp.shared.exceptions import MCPError
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic import ValidationError as PydanticValidationError
 
-from . import arrangement, installer, lifecycle, snapping, timing, updates, user_settings
+from . import (
+    arrangement,
+    handshake,
+    installer,
+    lifecycle,
+    pack_contents,
+    snapping,
+    timing,
+    updates,
+    user_settings,
+)
 from .asset_packs import build_manifest, prepare_map_file, unknown_ids
 from .asset_search import DEFAULT_MIN_SCORE, MATCH_MODES, rank_assets
 from .bridge_client import BridgeClient, BridgeUnavailableError, _state_file
@@ -41,11 +51,19 @@ from .errors import BridgeProtocolError, DungeondraftMCPError, ValidationError
 from .floorplan import WOXELS_PER_TILE, analyse
 from .placement import (
     DEFAULT_TOLERANCE,
+    add_bounds,
     find_adrift_fixtures,
     find_intrusions,
+    find_lone_kit_parts,
     find_stacks,
+    find_surface_overflow,
 )
-from .scene import DEFAULT_EMITTER_REACH, find_bare_ground, find_unexplained_lights
+from .scene import (
+    DEFAULT_EMITTER_REACH,
+    find_bare_ground,
+    find_unexplained_lights,
+    pack_census,
+)
 from .validation import (
     reject_smart_tiles,
     require_bare_filename,
@@ -75,7 +93,8 @@ PORT = int(_PORT_ENV) if _PORT_ENV else None
 INSTRUCTIONS = """\
 Build maps in a live Dungeondraft. Call ping, then get_status: most tools need
 an open map, and get_status gives map_center and map_size_woxels. If ping
-fails, ask the user to start Dungeondraft; do not retry blindly.
+fails, Dungeondraft needs a map open and the bridge mod, which
+install_dungeondraft_bridge installs; do not retry blindly.
 
 The map is shared: the user and other AI clients can change it between your
 turns. Re-read it before saying what is on it; never answer from memory.
@@ -84,6 +103,7 @@ Coordinates are woxels: 256 woxels = 1 tile, origin top-left, y grows DOWN.
 Rects are [x, y, w, h]; rotation is degrees.
 
 NEVER GUESS an asset path. Pass back one that list_assets returned, verbatim.
+A map sees only its own packs; search_pack_contents searches them all.
 
 Order: build_room (walls + floor) -> add_portal -> floors and terrain ->
 place_prefab / place_objects -> scatter_objects -> add_light -> look -> save_map.
@@ -484,8 +504,10 @@ def list_asset_packs() -> dict:
     from one would not survive a reload. `get_status.asset_packs` carries the
     same signal as two numbers.
 
-    To USE them, the map has to include them — see prepare_map_with_packs, which
-    writes a copy of the open map that includes the packs and opens it.
+    To choose between them by what they contain, not by name, use
+    search_pack_contents. To USE them, the map has to include them — see
+    prepare_map_with_packs, which writes a copy of the open map that includes
+    the packs and opens it.
     """
     return bridge.request("list_asset_packs")
 
@@ -504,10 +526,11 @@ def prepare_map_with_packs(filename: str, packs: list[str] | None = None) -> dic
     finished map means continuing in the copy from here on.
 
     filename: bare name for the new map, in the configured save directory.
-    packs: pack ids to include, from list_asset_packs. REQUIRED — choose them.
-      Including every installed pack is costly on a large library, and one pack
-      can dominate the catalogue. Pick by subject against the brief (a forest
-      pack for a forest); a map's set cannot be changed afterwards.
+    packs: pack ids to include, from list_asset_packs or search_pack_contents.
+      REQUIRED — choose them. The copy keeps the open map's packs and adds
+      these. Including every installed pack is costly on a large library, and
+      one pack can dominate the catalogue. Pick by what the brief needs;
+      adding more later means preparing another copy.
 
     The open map is saved first so the copy is current. Assets from a pack the
     map does not include are not merely hidden: placing one produces an object
@@ -991,7 +1014,7 @@ def list_assets(
 
     Results depend on the packs THIS MAP includes: none gives the ~1800 core
     assets, a full library over a hundred thousand. If a search comes up thin,
-    check list_asset_packs before concluding an asset does not exist.
+    search_pack_contents before concluding an asset does not exist.
 
     `colorable` lists INDEXES into `assets` of assets with a colour mask: they
     take `color` at placement, and the mask shows red without one. Colour
@@ -1088,6 +1111,121 @@ def list_assets(
 
 
 @tool()
+def search_pack_contents(
+    searches: Annotated[
+        list[str],
+        Field(
+            min_length=1,
+            max_length=MAX_SEARCHES,
+            description=f"1 to {MAX_SEARCHES} terms, e.g. ['pergola', 'well', 'hay bale'].",
+        ),
+    ],
+    category: str = "Objects",
+    packs: list[str] | None = None,
+    match_mode: str = "tokens",
+    limit: int = 20,
+) -> dict:
+    """Search INSIDE every installed asset pack, including packs this map lacks.
+
+    list_assets sees only the packs this map includes, and list_asset_packs
+    only names the rest. Use this at preflight, or when list_assets comes up
+    thin, to choose packs by what they contain. Read-only; Dungeondraft need not
+    be running.
+
+    Terms match asset paths and the pack's own tags. match_mode: 'tokens'
+    (every word, any order) or 'substring'. Not synonyms: "mug" will not find
+    a tankard.
+
+    Per term, `matched_by_pack` counts every match in each pack, and `best`
+    holds the top paths (`limit` per term, 80 shared), grouped by pack.
+    `packs_found` says, for each pack with a match, whether this map includes
+    it and whether the running Dungeondraft has it loaded.
+
+    Packs whose authors opted out of third-party tools reading them are not
+    searched; they are listed under `not_searched`.
+
+    A path from a pack the map does not include cannot be placed here. To use
+    it: preview_assets to look, then prepare_map_with_packs(filename,
+    packs=[ids]), which keeps the map's current packs and adds these. A pack
+    Dungeondraft has not loaded cannot be included until it is.
+
+    packs: limit the search to these pack ids.
+    """
+    require_choice(match_mode, ["tokens", "substring"], "match_mode")
+    require_choice(category, list(pack_contents.CATEGORIES), "category")
+    require_positive(limit, "limit")
+    terms = _distinct_terms(searches)
+    if not terms:
+        raise ValidationError("searches must hold at least one non-empty term")
+    if len(terms) > MAX_SEARCHES:
+        raise ValidationError(f"{len(terms)} searches is past the {MAX_SEARCHES} one call runs")
+    per_term = min(limit, max(1, MAX_MULTI_RESULTS // len(terms)))
+
+    folder = pack_contents.assets_directory()
+    # The bridge knows which packs THIS map includes and which versions are
+    # mounted. Without it the search still works; inclusion is just unknown.
+    mounted: dict[str, str] | None = None
+    included: set[str] | None = None
+    bridge_note = ""
+    try:
+        listed = bridge.request("list_asset_packs")
+        mounted = {str(p.get("id")): str(p.get("version", "")) for p in listed.get("installed", [])}
+        included = {str(p.get("id")) for p in listed.get("included_in_this_map", [])}
+    except BridgeUnavailableError:
+        bridge_note = (
+            "Dungeondraft is not reachable, so whether it has each pack loaded "
+            "and whether the open map includes it are unknown (null)."
+        )
+    found = pack_contents.discover(folder, mounted)
+    available = found["packs"]
+    if packs is not None:
+        unknown = sorted(set(packs) - set(available))
+        if unknown:
+            raise ValidationError(
+                f"no installed pack has id {unknown}. Ids here: {sorted(available)}"
+            )
+        available = {pack_id: available[pack_id] for pack_id in packs}
+
+    results = pack_contents.search(available, terms, category, mode=match_mode, limit=per_term)
+    hit = sorted({pack_id for r in results.values() for pack_id in r["matched_by_pack"]})
+    packs_found = {
+        pack_id: {
+            "name": available[pack_id].name,
+            "author": str(available[pack_id].info.get("author", "")),
+            "version": str(available[pack_id].info.get("version", "")),
+            "included_in_this_map": None if included is None else pack_id in included,
+            "loaded_in_dungeondraft": None if mounted is None else pack_id in mounted,
+        }
+        for pack_id in hit
+    }
+    not_searched = [
+        {
+            "id": pack_id,
+            "name": pack.name,
+            "reason": "its author opted out of third-party tools reading the pack",
+        }
+        for pack_id, pack in available.items()
+        if pack.restricted
+    ] + [{"file": entry["file"], "reason": entry["reason"]} for entry in found["unreadable"]]
+    result: dict[str, Any] = {
+        "category": category,
+        "match_mode": match_mode,
+        "per_term_limit": per_term,
+        "packs_searched": sum(1 for pack in available.values() if not pack.restricted),
+        "results": results,
+        "packs_found": packs_found,
+    }
+    if not_searched:
+        result["not_searched"] = not_searched
+    duplicates = {k: v for k, v in found["duplicates"].items() if k in available}
+    if duplicates:
+        result["duplicate_pack_files"] = duplicates
+    if bridge_note:
+        result["note"] = bridge_note
+    return result
+
+
+@tool()
 def preview_assets(
     assets: list[str],
     category: str = "Objects",
@@ -1117,7 +1255,8 @@ def preview_assets(
     your floor under your lighting. It catches the gross mistake (stone where
     you wanted wood); the map render still settles the subtle one.
 
-    assets: paths from list_assets, at most 32. category must match them.
+    assets: paths from list_assets or search_pack_contents, at most 32.
+    category must match them.
     columns: 1-8. cell_px: 32-256, the size each asset is fitted into.
     """
     if not assets:
@@ -1194,13 +1333,14 @@ def validate_scene(samples: int = 48, emitter_reach: float = DEFAULT_EMITTER_REA
                     lantern reads as a mistake immediately, and a viewer
                     notices before they can say why.
 
-    The light half matches emitters on asset NAME. That makes it a prompt to
-    look rather than a verdict: an oddly named source reads as unexplained, and
-    an unlit lantern placed as decor reads as an explanation. Read `explained`
-    too — it names the asset it credited, so a wrong match is visible.
+    Lights match emitters by asset NAME, so read it as a prompt: an oddly named
+    source reads as unexplained. `explained` names the asset it credited.
 
     `arrangement` is advice and never affects `ok`: how many objects sit at
     scale 1.0 on quarter turns, and how much of the map the build covers.
+    `art_families` is advice too: objects, walls and terrain slots counted per
+    pack (`core` is the stock library). Packs are drawn in different styles,
+    so counts outside the family the plan chose are worth a look.
 
     Outdoors, remember the global condition is itself a source. Under daylight
     the open ground needs no local sources at all; at night it wants the light
@@ -1237,6 +1377,13 @@ def validate_scene(samples: int = 48, emitter_reach: float = DEFAULT_EMITTER_REA
             "bare_ground": ground,
             "lights": lit,
             "arrangement": arrangement.review(map_size, object_list, wall_list, light_list),
+            "art_families": pack_census(
+                {
+                    "objects": [str(o.get("asset", "")) for o in object_list],
+                    "walls": [str(w.get("asset", "")) for w in wall_list],
+                    "terrain": [str(t) for t in terrain.get("slots") or [] if t],
+                }
+            ),
             "ok": ground["ok"] and lit["ok"],
             "level_id": status.get("level_id"),
         },
@@ -1320,31 +1467,27 @@ def validate_placements(tolerance_woxels: float = DEFAULT_TOLERANCE) -> dict:
     Use it after furnishing, before judging the render by eye. These defects
     look correct in every element count and placement response.
 
-    What it reports:
+      crossing_walls    real footprint on BOTH sides of a wall. Flush against
+                        a wall is correct and never reported.
+      wall_caps         posts and beams on layer 700+ over a wall or a wall
+                        join: the caps the skills ask for. Advice.
+      wall_mounted      paintings, wall lanterns, curtains on their wall;
+                        faces_room false = turned around.
+      blocking_portals  an object in a doorway or across a window.
+      unmeasurable      no texture_size, so not checked: not the same as clean.
+      stacked           two LARGE objects in one place on one layer (crates in
+                        crates). Deliberate pairs land here too. Advice.
+      adrift_fixtures   torches, tapestries, hearths away from any wall.
+                        Matched by name: read the distance and decide.
+      surface_overflow  dressing reaching past the table, desk or counter it
+                        stands on. A draped cloth lands here too. Advice.
+      lone_kit_parts    one part of a multi-piece fixture without its sibling:
+                        bedding without a frame, a hearth base without its
+                        chimney, a curtain without its rod. Advice.
 
-      crossing_walls    an object with real footprint on BOTH sides of a wall.
-                        Sitting flush against a wall is correct placement and
-                        is never reported.
-      wall_caps         posts, pillars and beams on layer 700+ set over a
-                        wall, or anything there covering a wall join: the caps
-                        the skills ask for. Advice; never changes `ok`.
-      wall_mounted      paintings, wall lanterns, curtains and the like on the
-                        wall they hang from; faces_room false = turned around.
-      blocking_portals  an object standing in a doorway or across a window.
-      unmeasurable      objects with no texture_size, so not checked. Not the
-                        same as clean: the map is only partly validated.
-      stacked           two LARGE objects in one place on one layer — crates
-                        inside crates, a tent through a wagon. Deliberate pairs
-                        land here too (a spit over a fire), so look before
-                        moving anything. Advice; never changes `ok`.
-      adrift_fixtures   torches, tapestries, hearths and the like standing away
-                        from any wall. Matched by asset name, so read the
-                        reported distance and decide.
-
-    A tankard on a table is NOT reported: it is on a higher layer.
-
-    Footprints are rotation-aware. A finding is evidence, not a verdict: a
-    hearth set INTO a thick wall is deliberate and will be reported.
+    A tankard on a table is NOT reported: it is on a higher layer. Footprints
+    are rotation-aware. A finding is evidence, not a verdict: a hearth set INTO
+    a thick wall is deliberate and will be reported.
 
     tolerance_woxels: how far past a wall's centre line an object may reach on
       both sides before it counts as crossing. The default (24) keeps flush
@@ -1366,13 +1509,19 @@ def validate_placements(tolerance_woxels: float = DEFAULT_TOLERANCE) -> dict:
     )
     report["stacked"] = find_stacks(object_list)
     report["adrift_fixtures"] = find_adrift_fixtures(object_list, wall_list)
+    report["surface_overflow"] = find_surface_overflow(object_list)
+    report["lone_kit_parts"] = find_lone_kit_parts(object_list)
     report["level_id"] = status.get("level_id")
     return _with_coverage(report, [object_cover, wall_cover, portal_cover])
 
 
 @tool()
 def list_elements(
-    kind: str = "objects", limit: int = 200, include_points: bool = False, offset: int = 0
+    kind: str = "objects",
+    limit: int = 200,
+    include_points: bool = False,
+    offset: int = 0,
+    include_bounds: bool = False,
 ) -> dict:
     """List elements currently on the map with their ids, positions, rotation, scale and asset.
 
@@ -1385,14 +1534,28 @@ def list_elements(
       default because a map can hold hundreds of paths and the coordinates
       swamp the listing; get_element always includes them for one element.
     offset: skip this many before returning, for paging through a large map.
+    include_bounds: give objects `opaque_bounds` too, as get_element does. It
+      reads every texture's pixels once, so ask only when fitting something.
+
+    Objects carry `bounds`, [x0, y0, x1, y1] in woxels after scale and
+    rotation: where the canvas reaches.
 
     `total` is how many elements of this kind exist, `count` how many came back,
     and `truncated` says plainly that there are more. Read `total`, not `count`,
     before concluding anything about the whole map.
     """
-    return bridge.request(
-        "list_elements", kind=kind, limit=limit, include_points=include_points, offset=offset
-    )
+    params: dict[str, Any] = {
+        "kind": kind,
+        "limit": limit,
+        "include_points": include_points,
+        "offset": offset,
+    }
+    if include_bounds:
+        params["include_bounds"] = True
+    result = bridge.request("list_elements", **params)
+    for element in result.get("elements", []):
+        add_bounds(element)
+    return result
 
 
 @tool()
@@ -1409,8 +1572,14 @@ def get_composition_snapshot() -> dict:
 
 @tool()
 def get_element(id: int) -> dict:
-    """Get details (kind, position, rotation, scale, asset) for a single element by id."""
-    return bridge.request("get_element", id=id)
+    """Get details (kind, position, rotation, scale, asset) for a single element by id.
+
+    Objects carry `bounds` and `opaque_bounds`, [x0, y0, x1, y1] in woxels after
+    scale and rotation. `bounds` is the asset's whole canvas; `opaque_bounds`
+    is the part its art actually covers. Fit a bed, rug or shadow to the
+    opaque bounds of the objects it goes under, not to their positions.
+    """
+    return add_bounds(bridge.request("get_element", id=id))
 
 
 @tool()
@@ -3787,6 +3956,7 @@ def export_map(
     timeout: float = EXPORT_WAIT_DEFAULT,
     max_px: int | None = None,
     quality: Annotated[int, Field(ge=1, le=100)] = 90,
+    grid: bool | None = None,
 ) -> list[Image | str]:
     """Render the entire current map to a clean image (no UI) and return it.
 
@@ -3797,6 +3967,10 @@ def export_map(
 
     format: 'png' (default), 'jpg' or 'webp'. quality (1-100, default 90)
       applies to jpg and webp.
+
+    grid: False for a gridless image, the usual deliverable for sharing and
+      for VTTs that draw their own grid; True to force it on. Omitted, the
+      export matches the editor. The editor's grid is put back afterwards.
 
     The render is a tracked operation: this waits up to `timeout` seconds
     (max 600). If that runs out, the error names the operation; collect the
@@ -3819,9 +3993,15 @@ def export_map(
     _require_wait(timeout)
     _require_max_px(max_px)
     ext = "jpg" if format.lower() == "jpeg" else format.lower()
-    started = bridge.request(
-        "export_map", name=f"export-{uuid4().hex}.{ext}", ppi=ppi, format=ext, quality=quality
-    )
+    params: dict[str, Any] = {
+        "name": f"export-{uuid4().hex}.{ext}",
+        "ppi": ppi,
+        "format": ext,
+        "quality": quality,
+    }
+    if grid is not None:
+        params["grid"] = grid
+    started = bridge.request("export_map", **params)
     return _export_image(_wait_for_operation(str(started["operation_id"]), timeout), max_px)
 
 
@@ -4154,12 +4334,25 @@ def inspect_dungeondraft_installation(live: bool = False) -> dict:
 
 
 @tool()
-def install_dungeondraft_bridge(mods_dir: str = "", confirm: bool = False) -> dict:
-    """Preview bridge installation; apply only when confirm is true.
+def install_dungeondraft_bridge(
+    mods_dir: str = "", confirm: bool = False, replace: bool = False
+) -> dict:
+    """Install or update the bundled bridge mod in Dungeondraft's mods folder.
 
-    Provide an explicit Dungeondraft mods directory. This never starts
-    Dungeondraft or changes a map; conflicts must be resolved through the CLI
-    with --force so a backup can be reviewed.
+    This is how a Claude Desktop extension or Claude Code plugin user gets
+    the mod, and how they update it after updating the companion.
+
+    1. Call with no mods_dir: `candidates` lists the folders Dungeondraft
+       loads, the one it is configured to use first.
+    2. Call with mods_dir to preview: show the user `actions`.
+       `requires_force` true means a bridge is already there.
+    3. Once the user agrees, call again with confirm=true, and replace=true
+       if a bridge is already there. The old one is moved to a backup outside
+       the mods folder, never deleted.
+
+    It never starts Dungeondraft or changes a map. The user must then fully
+    quit and reopen Dungeondraft and open a map; ping's `bridge_current`
+    confirms the new bridge is the one running.
     """
     if not mods_dir:
         return {
@@ -4179,22 +4372,33 @@ def install_dungeondraft_bridge(mods_dir: str = "", confirm: bool = False) -> di
         "actions": list(plan.actions),
         "requires_force": plan.requires_force,
     }
+    if plan.requires_force:
+        preview["note"] = (
+            "a bridge is already installed here; with the user's agreement, call "
+            "again with confirm=true and replace=true to back it up and replace it"
+        )
     if not confirm:
         return preview
+    if plan.requires_force and not replace:
+        return {**preview, "conflict": "a bridge is already installed; pass replace=true"}
 
     try:
-        result = installer.apply_install(plan, force=False)
+        result = installer.apply_install(plan, force=replace)
     except installer.InstallConflictError as exc:
         return {**preview, "conflict": str(exc)}
     return {
         "changed": result.changed,
         "destination": str(result.destination),
-        "backup_destination": None,
+        "backup_destination": (
+            str(result.backup_destination) if result.backup_destination else None
+        ),
+        "next": "fully quit and reopen Dungeondraft, open a map, then call ping",
     }
 
 
 def main() -> None:
     lifecycle.start()
+    handshake.install()
     updates.start_background_check()
     mcp.run()
 

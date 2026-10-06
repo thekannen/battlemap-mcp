@@ -13,7 +13,9 @@ offline, rate-limited or blocked, the companion behaves as if no update exists.
 from __future__ import annotations
 
 import json
+import platform
 import re
+import sys
 import threading
 import urllib.request
 from datetime import UTC, datetime, timedelta
@@ -86,19 +88,87 @@ def latest(now: datetime | None = None, *, fetch=fetch_latest) -> str | None:
     return version
 
 
-def notice(installed: str, newest: str | None) -> dict | None:
+def downloads(version: str, system: str | None = None, machine: str | None = None) -> dict:
+    """Direct links to one release's files for this computer.
+
+    Release assets are named by version and platform, so the links follow
+    from the version alone; nothing more is asked of GitHub. Missing
+    `companion` means a platform no release is built for.
+    """
+    system = system or platform.system()
+    machine = (machine or platform.machine()).lower()
+    arch = {"amd64": "x64", "x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}.get(machine)
+    name = {"Windows": "windows", "Darwin": "macos", "Linux": "linux"}.get(system)
+    base = f"https://github.com/{REPOSITORY}/releases/download/v{version}"
+    links = {
+        "mod": f"{base}/battlemap-mcp-mod-{version}.zip",
+        "checksums": f"{base}/SHA256SUMS",
+    }
+    if name and arch and not (name != "macos" and arch == "arm64"):
+        extension = "zip" if name == "windows" else "tar.gz"
+        links["companion"] = f"{base}/battlemap-mcp-companion-{version}-{name}-{arch}.{extension}"
+    return links
+
+
+def install_channel(executable: str | None = None) -> str:
+    """How this companion was installed, from where it runs.
+
+    A Claude Code plugin unpacks its bundle into `.mcpb-cache` under the plugin,
+    and Claude Desktop keeps extensions under `Claude Extensions`. Both update
+    through their own app, so a download link would be the wrong advice.
+    """
+    parts = Path(executable or sys.executable).parts
+    if ".mcpb-cache" in parts:
+        return "claude-code-plugin"
+    if "Claude Extensions" in parts:
+        return "claude-desktop-extension"
+    return "download"
+
+
+def notice(installed: str, newest: str | None, channel: str | None = None) -> dict | None:
     """What to tell the user, or None when the installed version is current."""
     current, available = parse(installed), parse(newest or "")
     if current is None or available is None or available <= current:
         return None
+    channel = channel or install_channel()
+    if channel == "claude-code-plugin":
+        return {
+            "installed": installed,
+            "latest": newest,
+            "url": RELEASES_URL,
+            "message": (
+                f"battlemap-mcp {newest} is available (this is {installed}). In "
+                "Claude Code, run /plugin, update the battlemap-mcp plugin, and "
+                "restart Claude Code. Then ask me to install the bridge, and "
+                "restart Dungeondraft."
+            ),
+        }
+    if channel == "claude-desktop-extension":
+        return {
+            "installed": installed,
+            "latest": newest,
+            "url": RELEASES_URL,
+            "message": (
+                f"battlemap-mcp {newest} is available (this is {installed}). "
+                f"Download battlemap-mcp-{newest}.mcpb from {RELEASES_URL}, open "
+                "it to update the extension in Claude Desktop, then ask me to "
+                "install the bridge and restart Dungeondraft."
+            ),
+        }
+    files = downloads(str(newest))
+    companion = files.get("companion", f"the one for your computer from {RELEASES_URL}")
     return {
         "installed": installed,
         "latest": newest,
         "url": RELEASES_URL,
+        "downloads": files,
         "message": (
-            f"battlemap-mcp {newest} is available (this is {installed}). Download the "
-            f"companion and the mod ZIP from {RELEASES_URL} and install both; "
-            "the companion cannot update itself."
+            f"battlemap-mcp {newest} is available (this is {installed}). Download "
+            f"the companion, {companion}, and the mod ZIP, {files['mod']} "
+            f"(checksums: {files['checksums']}). Replace the whole companion folder "
+            "with the new one and run its Connect file again; replace the mod folder "
+            "and restart Dungeondraft. The "
+            "companion cannot update itself."
         ),
     }
 

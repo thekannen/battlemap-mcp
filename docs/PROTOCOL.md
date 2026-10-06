@@ -57,20 +57,20 @@ The following is the public MCP tool surface; the companion may perform several 
 | `validate_scene` | `samples`, `emitter_reach` |
 | `validate_floorplan` | `cell_woxels`, `min_room_tiles` |
 | `validate_placements` | `tolerance_woxels` |
-| `list_elements` | `kind`, `limit`, `include_points`, `offset` |
+| `list_elements` | `kind`, `limit`, `include_points`, `offset`, `include_bounds` |
 | `get_composition_snapshot` | — |
 | `get_element` | `id` |
 | `list_levels` | — |
-| `place_object` | `asset`, `x`, `y`, `scale`, `rotation`, `sorting`, `layer`, `color`, `modulate`, `block_light` |
-| `place_objects` | `objects` |
-| `draw_wall` | `points`, `asset`, `loop`, `shadow`, `type`, `joint`, `color` |
+| `place_object` | `asset`, `x`, `y`, `scale`, `rotation`, `sorting`, `layer`, `color`, `modulate`, `block_light`, `snap` |
+| `place_objects` | `objects`, `file`, `snap` |
+| `draw_wall` | `points`, `asset`, `loop`, `shadow`, `type`, `joint`, `color`, `snap` |
 | `merge_walls` | `ids` |
-| `draw_path` | `points`, `asset`, `layer`, `sorting`, `smoothness`, `width`, `fade_in`, `fade_out`, `grow`, `shrink` |
-| `add_light` | `x`, `y`, `color`, `energy`, `range`, `shadows`, `asset` |
-| `add_portal` | `asset`, `x`, `y`, `closed`, `radius`, `mount`, `snap_max`, `flip`, `fallback_free`, `rotation` |
+| `draw_path` | `points`, `asset`, `layer`, `sorting`, `smoothness`, `width`, `fade_in`, `fade_out`, `grow`, `shrink`, `snap` |
+| `add_light` | `x`, `y`, `color`, `energy`, `range`, `shadows`, `asset`, `snap` |
+| `add_portal` | `asset`, `x`, `y`, `closed`, `radius`, `mount`, `snap_max`, `flip`, `fallback_free`, `rotation`, `snap` |
 | `add_roof` | `points`, `asset`, `width`, `type`, `sorting`, `sunlight`, `sun_angle`, `sun_contrast` |
 | `place_pattern` | `asset`, `rect`, `points`, `category`, `color`, `rotation`, `z` |
-| `build_room` | `rect`, `points`, `wall_asset`, `floor`, `floor_asset`, `floor_category`, `floor_color`, `floor_slot`, `wall_type`, `wall_joint` |
+| `build_room` | `rect`, `points`, `wall_asset`, `floor`, `floor_asset`, `floor_category`, `floor_color`, `floor_slot`, `wall_type`, `wall_joint`, `snap` |
 | `scatter_objects` | `assets`, `rect`, `count`, `scale_min`, `scale_max`, `rotation_min`, `rotation_max`, `min_gap`, `color`, `sorting`, `layer`, `seed` |
 | `add_text` | `text`, `x`, `y`, `size`, `color`, `font` |
 | `generator_options` | `name`, `value` |
@@ -96,7 +96,7 @@ The following is the public MCP tool surface; the companion may perform several 
 | `add_water` | `rect`, `points`, `invert` |
 | `set_ambient_light` | `color` |
 | `list_prefabs` | `set` |
-| `place_prefab` | `name`, `set`, `x`, `y`, `rotation` |
+| `place_prefab` | `name`, `set`, `x`, `y`, `rotation`, `snap` |
 | `list_tool_controls` | `tool` |
 | `tool_action` | `tool`, `control` |
 | `set_tool_option` | `tool`, `control`, `item`, `color`, `pressed`, `value`, `item_index`, `item_metadata` |
@@ -105,10 +105,10 @@ The following is the public MCP tool surface; the companion may perform several 
 | `set_save_directory` | `path` |
 | `open_map` | `path`, `wait` |
 | `clear_caves` | — |
-| `move_element` | `id`, `x`, `y` |
-| `move_elements` | `ids`, `dx`, `dy`, `rotation`, `pivot_x`, `pivot_y` |
+| `move_element` | `id`, `x`, `y`, `snap` |
+| `move_elements` | `ids`, `dx`, `dy`, `rotation`, `pivot_x`, `pivot_y`, `snap` |
 | `modify_object` | `id`, `scale`, `rotation`, `color`, `modulate`, `shadow`, `layer`, `block_light` |
-| `duplicate_object` | `id`, `dx`, `dy` |
+| `duplicate_object` | `id`, `dx`, `dy`, `snap` |
 | `delete_element` | `id` |
 | `delete_elements` | `ids` |
 | `add_level` | `label` |
@@ -117,7 +117,7 @@ The following is the public MCP tool surface; the companion may perform several 
 | `set_level` | `id` |
 | `screenshot` | `max_px` |
 | `clear_captures` | — |
-| `export_map` | `ppi`, `format`, `timeout`, `max_px` |
+| `export_map` | `ppi`, `format`, `timeout`, `max_px`, `quality`, `grid` |
 | `get_export` | `operation_id`, `timeout`, `max_px` |
 | `get_operation` | `operation_id` |
 | `get_camera` | — |
@@ -133,4 +133,9 @@ The following is the public MCP tool surface; the companion may perform several 
 | `set_tool_layer` | `tool`, `layer` |
 | `select_tool` | `tool` |
 | `inspect_dungeondraft_installation` | `live` |
-| `install_dungeondraft_bridge` | `mods_dir`, `confirm` |
+| `install_dungeondraft_bridge` | `mods_dir`, `confirm`, `replace` |
+| `search_pack_contents` | `searches`, `category`, `packs`, `match_mode`, `limit` |
+| `get_snap_settings` | — |
+| `checkpoint` | `label` |
+| `rollback_checkpoint` | `label` |
+| `list_checkpoints` | — |

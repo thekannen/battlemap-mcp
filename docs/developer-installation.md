@@ -8,14 +8,15 @@ From the checkout root:
 
 ```text
 uv build --wheel ./server --out-dir ./dist
-uv tool install --python 3.11 --force --reinstall ./dist/battlemap_mcp-0.2.0-py3-none-any.whl
+uv tool install --python 3.11 --force --reinstall ./dist/battlemap_mcp-1.2.0-py3-none-any.whl
 uv tool update-shell
 ```
 
 Use the wheel filename actually produced. If uv cannot provision Python, resolve
 its reported error first; `uv python install 3.11` explicitly installs the requested
 version. Reopen your shell/application after a PATH change. The release companion
-avoids these prerequisites.
+avoids these prerequisites. A source install takes the newest `mcp` 2.x; release
+builds pin the exact SDK version they ship.
 
 With Dungeondraft closed and a writable mods folder configured, either extract
 the release mod ZIP and run `battlemap-mcp setup --client codex`, or use the
@@ -26,7 +27,9 @@ battlemap-mcp install --dry-run --client codex
 battlemap-mcp install --client codex
 ```
 
-Use `--client claude-code` for Claude Code. To replace existing bridge/skills,
+Use `--client claude-code` for Claude Code. `setup` also accepts
+`--client opencode`, which installs skills and prints the `opencode.json` entry
+to add by hand. To replace existing bridge/skills,
 add `--force` to preview and install; the installer keeps dated backups outside
 active discovery folders. It checks destination access before asking for
 confirmation, though permissions can still change between preview and writing.
