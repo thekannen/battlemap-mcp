@@ -106,13 +106,13 @@ jobs:
       # The freshly built launcher, whether or not it shipped: a new
       # generation is published from this. See docs/releases.md.
       - if: runner.os == 'Windows'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-launcher-candidate
           path: dist/launcher/*
           if-no-files-found: error
           retention-days: 90
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.platform }}
           path: dist/release/*
@@ -136,14 +136,14 @@ jobs:
         env:
           PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
         run: python tools/collect_release.py artifacts release --version "$PACKAGE_VERSION" --platform windows-x64 --platform linux-x64 --changelog CHANGELOG.md --summary-out notes/summary.md
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets
           path: release/*
           if-no-files-found: error
           retention-days: 14
       # The "What's new" for the release page, kept apart from the downloads.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-notes
           path: notes/summary.md
