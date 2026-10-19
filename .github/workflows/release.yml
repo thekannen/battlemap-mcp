@@ -178,9 +178,9 @@ jobs:
           ## Install or update
 
           Pick one way to connect your AI app: download the mod ZIP and the
-          companion for your platform and follow the [installation guide](https://github.com/thekannen/battlemap-mcp#get-started),
+          companion for your platform and follow the [installation guide](https://knownframe.com/battlemap-mcp/docs/get-started/),
           or install from Claude: open the `.mcpb` in the Claude desktop app, or
-          install the battlemap-mcp plugin in Claude Code ([how](https://github.com/thekannen/battlemap-mcp#install-from-claude)).
+          install the battlemap-mcp plugin in Claude Code ([how](https://knownframe.com/battlemap-mcp/docs/install-from-claude/)).
           See [CHANGELOG.md](https://github.com/thekannen/battlemap-mcp/blob/main/CHANGELOG.md) for what changed.
 
           SHA256SUMS covers every download. The Windows companion is unsigned;

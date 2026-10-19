@@ -40,5 +40,5 @@ succeeds. --force updates skills; it cannot overwrite Claude's existing entry.
 Repeating Connect at the same path is harmless. Do not mix _internal or .pkg files
 from different versions. Keep the entire companion folder together when updating.
 Linux has been validated on Ubuntu 24.04 under WSL2 only. Run the Linux editor
-and AI client in the same Linux environment, and see the repository's Linux
-installation guide for details.
+and AI client in the same Linux environment, and see
+https://knownframe.com/battlemap-mcp/docs/linux/ for details.

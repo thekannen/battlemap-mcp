@@ -34,7 +34,7 @@ The bridge listens on localhost TCP and authenticates commands and responses;
 it does not encrypt traffic. Do not expose its port beyond localhost. This is
 a local, single-user integration and does not protect against administrators or
 malicious software running as the same OS user. See the
-[protocol](docs/PROTOCOL.md) and [privacy policy](docs/PRIVACY.md).
+[protocol](docs/PROTOCOL.md) and [privacy policy](https://knownframe.com/battlemap-mcp/docs/privacy/).
 
 ## Downloads
 

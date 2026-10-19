@@ -1,6 +1,6 @@
 # Contributing
 
-This repository contains battlemap-mcp: a Python MCP companion and a Dungeondraft bridge mod. Start with the [technical reference](docs/TECHNICAL_REFERENCE.md) and [developer installation](docs/developer-installation.md).
+This repository contains battlemap-mcp: a Python MCP companion and a Dungeondraft bridge mod. Start with the [technical reference](https://knownframe.com/battlemap-mcp/docs/technical-reference/) and [developer installation](docs/developer-installation.md).
 
 ## Local checks
 
@@ -25,3 +25,5 @@ After a bridge change, restart the disposable editor, check authenticated `ping`
 ## Changes
 
 Keep changes focused, include behavioral regression coverage where appropriate, and describe validation and remaining limits. Do not include asset packs, maps, credentials, machine-specific paths, or research records. Follow the [code of conduct](CODE_OF_CONDUCT.md); report security problems through [SECURITY.md](SECURITY.md).
+
+User docs live at https://knownframe.com/battlemap-mcp/docs/, which the maintainer updates. If a change alters what users see or do, say in the pull request which page there needs a matching update.

@@ -1,11 +1,10 @@
 # Documentation
 
-- [Install companion packages](install-packages.md)
+User documentation is at **[knownframe.com/battlemap-mcp/docs](https://knownframe.com/battlemap-mcp/docs/)**.
+
+Contributor references in this folder:
+
 - [Developer installation](developer-installation.md)
-- [Technical reference](TECHNICAL_REFERENCE.md)
 - [Bridge protocol](PROTOCOL.md)
-- [Known limitations](KNOWN_LIMITATIONS.md)
 - [Build release packages](releases.md)
-- [Privacy](PRIVACY.md)
-- [Legal and attribution](LEGAL.md)
 - [Contributing](../CONTRIBUTING.md)

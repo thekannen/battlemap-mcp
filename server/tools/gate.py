@@ -15,8 +15,8 @@ SERVER = pathlib.Path(__file__).resolve().parents[1]
 REPO = SERVER.parent
 # The interpreter running this script, unless a server/.venv exists next to it.
 # Everything else goes through `PYTHON -m <tool>`: hardcoding a venv's bin/
-# directory assumes one particular layout, and the README creates the
-# virtualenv at the REPOSITORY root, while Windows uses Scripts/ rather than
+# directory assumes one particular layout, and developer-installation.md creates
+# the virtualenv at the REPOSITORY root, while Windows uses Scripts/ rather than
 # bin/ — either of which made this die with FileNotFoundError before a single
 # check ran.
 _LOCAL = SERVER / ".venv" / "bin" / "python"

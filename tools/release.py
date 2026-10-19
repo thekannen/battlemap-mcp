@@ -1073,6 +1073,9 @@ def mcpb_manifest(version, platforms):
             "url": "https://github.com/thekannen/battlemap-mcp",
         },
         "homepage": "https://github.com/thekannen/battlemap-mcp",
+        "documentation": "https://knownframe.com/battlemap-mcp/docs/",
+        "support": "https://knownframe.com/battlemap-mcp/docs/troubleshooting/",
+        "privacy_policies": ["https://knownframe.com/privacy/battlemap-mcp/"],
         "repository": {
             "type": "git",
             "url": "https://github.com/thekannen/battlemap-mcp",
