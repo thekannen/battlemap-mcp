@@ -6,7 +6,7 @@ An AI collaborator for your Dungeondraft maps: a local bridge that lets your AI 
 
 <img src="docs/media/tavern-build.gif" alt="An AI agent building a tavern interior in Dungeondraft, sped up" width="100%">
 
-<sub>Sped up 11x to fit as a gif — the actual build took about 5 minutes.</sub>
+<sub>Sped up 11×; the full build took about five minutes.</sub>
 
 ## Support creators first
 
@@ -20,7 +20,9 @@ Build a whole map from a brief, plan an encounter together, furnish one room, ex
 
 You need **Dungeondraft 1.2.0.1** and an AI app that can run local MCP servers, on the same computer. Follow **[Get started](https://knownframe.com/battlemap-mcp/docs/get-started/)**, then the [Windows](https://knownframe.com/battlemap-mcp/docs/windows/), [macOS](https://knownframe.com/battlemap-mcp/docs/macos/) or [Linux](https://knownframe.com/battlemap-mcp/docs/linux/) guide. Downloads are on the [Releases](https://github.com/thekannen/battlemap-mcp/releases) page.
 
-### 5. Include your asset packs
+<a id="5-include-your-asset-packs"></a>
+
+### Include your asset packs
 
 See [Include your asset packs](https://knownframe.com/battlemap-mcp/docs/asset-packs/).
 
@@ -30,7 +32,7 @@ Use the Claude desktop extension or the Claude Code plugin: see [Install from Cl
 
 ### Platform limits
 
-See [Platform limits](https://knownframe.com/battlemap-mcp/docs/known-limitations/#platform-limits) and [Known limitations](https://knownframe.com/battlemap-mcp/docs/known-limitations/).
+See [Platform limits](https://knownframe.com/battlemap-mcp/docs/known-limitations/#platform-limits).
 
 ### If something does not work
 
