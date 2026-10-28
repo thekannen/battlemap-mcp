@@ -2976,6 +2976,63 @@ def material(u: Uat) -> None:
     )
 
 
+@group("floor_tint")
+def floor_tint(u: Uat) -> None:
+    """An uncoloured floor is tinted when it is a mask, and left alone when it is art."""
+
+    def place_uncoloured(category: str, search: str, x: float):
+        asset = u.asset(category, search)
+        if not asset:
+            return None, None
+        r = u.c.request(
+            "place_pattern", category=category, asset=asset, rect=[x, u.cy - 2048, 512, 512]
+        )
+        u.c.request("delete_element", id=r["id"])
+        return asset.rsplit("/", 1)[-1], r
+
+    # regression: tileset_wood_damaged is a red colour mask, not greyscale art,
+    # so the greyscale-only rule left it untinted and it rendered flat white.
+    def red_mask_floor_tinted():
+        name, r = place_uncoloured("Simple Tiles", "wood_damaged", u.cx - 2048)
+        if r is None:
+            return "skipped: no wood_damaged tile in this map's library"
+        assert r.get("texture_red_mask") is True, f"{name} not seen as a red mask: {r}"
+        assert r.get("used_default_tint") is True, f"{name} got no default tint: {r}"
+        assert r["color"].lower() not in ("#ffffff", "#ffffffff"), f"{name} left white: {r}"
+        return f"{name}: red mask, tinted {r['color']} ({r['texture_colour']})"
+
+    u.check("an uncoloured red-mask floor gets the default tint", red_mask_floor_tinted, True)
+
+    def greyscale_floor_tinted():
+        name, r = place_uncoloured("Simple Tiles", "brick", u.cx - 1024)
+        if r is None:
+            return "skipped: no brick tile in this map's library"
+        assert r.get("texture_greyscale") is True, f"{name} not seen as greyscale: {r}"
+        assert r["color"].lower() not in ("#ffffff", "#ffffffff"), f"{name} left white: {r}"
+        return f"{name}: greyscale, tinted {r['color']}"
+
+    u.check(
+        "an uncoloured greyscale floor still gets the default tint", greyscale_floor_tinted, True
+    )
+
+    # The reddest real-colour texture in core (infestation_tile) is the case the
+    # spread threshold exists for: red_share 1.0, but too faint to be a mask.
+    def colour_art_left_alone():
+        found = []
+        for search in ("infestation", "grass"):
+            name, r = place_uncoloured("Materials", search, u.cx + 1024 * len(found))
+            if r is None:
+                continue
+            assert r.get("texture_red_mask") is False, f"{name} taken for a mask: {r}"
+            assert r["color"].lower() in ("#ffffff", "#ffffffff"), f"{name} tinted: {r}"
+            found.append(name)
+        if not found:
+            return "skipped: no infestation or grass material in this map's library"
+        return f"{', '.join(found)}: real colour, left untinted"
+
+    u.check("an uncoloured full-colour floor is left untinted", colour_art_left_alone, True)
+
+
 @group("crop")
 def crop(u: Uat) -> None:
     """Runtime behavior and validation."""

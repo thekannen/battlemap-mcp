@@ -2698,7 +2698,8 @@ func _greyscale_from(stats : Dictionary) -> bool:
 	return int(stats["opaque"]) > 0 and int(stats["coloured"]) <= int(stats["opaque"]) / 50
 
 func _red_mask_from(stats : Dictionary) -> bool:
-	return int(stats["coloured"]) > 0 and float(stats["red_share"]) >= RED_MASK_MIN_SHARE 		and float(stats["mean_spread"]) >= RED_MASK_MIN_SPREAD
+	return int(stats["coloured"]) > 0 and float(stats["red_share"]) >= RED_MASK_MIN_SHARE \
+		and float(stats["mean_spread"]) >= RED_MASK_MIN_SPREAD
 
 func _texture_is_greyscale(tex) -> bool:
 	return _greyscale_from(_texture_colour_stats(tex))
