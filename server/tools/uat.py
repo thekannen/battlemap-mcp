@@ -2891,6 +2891,102 @@ def dd2vtt(u: Uat) -> None:
     )
 
 
+@group("shared_walls")
+def shared_walls(u: Uat) -> None:
+    """Two rooms side by side share one wall, so a door between them opens in a VTT."""
+    import importlib
+    import itertools
+    import json
+    import math
+    import tempfile
+
+    server = importlib.import_module("battlemap_mcp.server")
+    door = u.asset("Portals", "door")
+    floor = u.asset("Simple Tiles", "")
+    T = 256
+    x0, y0 = u.cx + 4 * T, u.cy - 6 * T
+
+    def walls_across_the_door(mode: str) -> tuple[int, dict]:
+        """Build A and B (mode), put a door on the shared edge, export; count
+        line-of-sight segments lying along the doorway."""
+        server.checkpoint("shared_walls")
+        try:
+            server.build_room(rect=[x0, y0, 3 * T, 3 * T], floor="none", snap="none")
+            b = server.build_room(
+                rect=[x0 + 3 * T, y0, 3 * T, 3 * T],
+                floor="none",
+                snap="none",
+                shared_walls=mode,
+            )
+            server.add_portal(door, x=x0 + 3 * T, y=y0 + 1.5 * T, mount="wall")
+            with tempfile.TemporaryDirectory() as out:
+                written = server.export_dd2vtt(path=str(pathlib.Path(out) / "rooms.dd2vtt"), ppi=16)
+                export = json.loads(pathlib.Path(written["path"]).read_text())
+        finally:
+            server.rollback_checkpoint("shared_walls")
+        (portal,) = export["portals"]
+        (a, b_end) = ((p["x"], p["y"]) for p in portal["bounds"])
+        length = math.dist(a, b_end)
+        ux, uy = (b_end[0] - a[0]) / length, (b_end[1] - a[1]) / length
+        crossing = 0
+        for run in export["line_of_sight"]:
+            for p, q in itertools.pairwise((pt["x"], pt["y"]) for pt in run):
+                off_line = [abs((pt[0] - a[0]) * uy - (pt[1] - a[1]) * ux) for pt in (p, q)]
+                if max(off_line) > 0.01:
+                    continue
+                tp = (p[0] - a[0]) * ux + (p[1] - a[1]) * uy
+                tq = (q[0] - a[0]) * ux + (q[1] - a[1]) * uy
+                if min(max(tp, tq), length) - max(min(tp, tq), 0.0) > 0.05:
+                    crossing += 1
+        return crossing, b
+
+    def door_between_rooms_opens():
+        if not door:
+            return "skipped: no door in this map's library"
+        crossing, b = walls_across_the_door("split")
+        assert crossing == 0, f"{crossing} wall segment(s) still cross the doorway: {b}"
+        assert len(b.get("shared_edges", [])) == 1, f"the shared edge was not found: {b}"
+        # The control: the old full loop doubles the wall, and the test sees it.
+        doubled, _ = walls_across_the_door("keep")
+        assert doubled >= 1, "the check cannot see a doubled wall, so it proves nothing"
+        return f"split: doorway clear; keep: {doubled} segment(s) across it"
+
+    u.check(
+        "shared_walls: a door between two rooms has no wall across it in the export",
+        door_between_rooms_opens,
+        needs_dirty=True,
+    )
+
+    # regression: a boundary already walled all round sent wall_runs=[], which
+    # the bridge refused, so the floor was not built either.
+    def walled_boundary_gets_only_a_floor():
+        if not floor:
+            return "skipped: no Simple Tiles floor in this map's library"
+        server.checkpoint("shared_walls")
+        try:
+            server.build_room(rect=[x0, y0, 3 * T, 3 * T], floor="none", snap="none")
+            walls = u.c.request("list_elements", kind="walls", limit=1)["total"]
+            again = server.build_room(
+                rect=[x0, y0, 3 * T, 3 * T],
+                floor_asset=floor,
+                floor_category="Simple Tiles",
+                snap="none",
+            )
+            after = u.c.request("list_elements", kind="walls", limit=1)["total"]
+        finally:
+            server.rollback_checkpoint("shared_walls")
+        assert again.get("wall_ids") == [], f"walls drawn over the existing loop: {again}"
+        assert again.get("floor_id") is not None, f"no floor built: {again}"
+        assert after == walls, f"wall count went {walls} -> {after}"
+        return f"no new wall, floor {again['floor_id']}, {len(again['shared_edges'])} edges shared"
+
+    u.check(
+        "shared_walls: a boundary walled all round gets only its floor",
+        walled_boundary_gets_only_a_floor,
+        needs_dirty=True,
+    )
+
+
 @group("material")
 def material(u: Uat) -> None:
     """A material stroke lands where it was painted and undoes cleanly."""

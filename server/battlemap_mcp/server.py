@@ -2959,11 +2959,17 @@ def build_room(
       gets all four corners on the grid (on hex, the far one may shift).
     shared_walls: 'split' (default) leaves out the parts of the boundary an
       existing wall on this level already covers, so two rooms side by side
-      share ONE wall and a door placed on it opens in a VTT export. 'keep'
-      always draws the full loop.
+      share ONE wall and a door placed on it opens in a VTT export. Only a
+      wall of the same wall_type (and of wall_asset, when given) is shared.
+      A boundary walled all round gets no wall, only its floor. The shared
+      wall belongs to the room built first: deleting that room's wall later
+      leaves this room open on the shared side. 'keep' always draws the full
+      loop.
 
     Returns { wall_id, floor_id?, points }, or, when walls were shared,
-    { wall_ids, shared_edges, floor_id?, points }.
+    { wall_ids, shared_edges, floor_id?, points } (wall_ids may be empty).
+    On a map with more walls than one read covers, walls_considered and a
+    note say how many were checked for sharing.
     """
     if points is not None:
         require_points(points, minimum=3)
@@ -3019,13 +3025,33 @@ def build_room(
             boundary = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
         else:
             boundary = params["points"]
-        walls, _ = _read_all("walls", include_points=True)
-        runs, shared = split_boundary(boundary, segments_of(walls))
+        walls, coverage = _read_all("walls", include_points=True)
+        # Borrow only a wall that looks like this room's own: same type, and
+        # the same asset when one was named (the default is resolved in
+        # Dungeondraft, so an unnamed asset matches any).
+        alike = [
+            w
+            for w in walls
+            if w.get("wall_type", wall_type) == wall_type
+            and not (wall_asset and w.get("asset") and w["asset"] != wall_asset)
+        ]
+        runs, shared = split_boundary(boundary, segments_of(alike))
         if shared:
             params["wall_runs"] = runs
     result = bridge.request("build_room", **params)
     if shared:
         result = {**result, "shared_edges": shared}
+    if shared_walls == "split" and not coverage["complete"]:
+        unread = coverage["total"] - coverage["read"]
+        result = {
+            **result,
+            "walls_considered": {k: coverage[k] for k in ("total", "read", "complete")},
+            "note": (
+                f"only the first {coverage['read']} of {coverage['total']} walls were "
+                f"checked for sharing; {unread} were not, so this room may double a "
+                "wall among them"
+            ),
+        }
     return _with_snap(result, snap_info)
 
 

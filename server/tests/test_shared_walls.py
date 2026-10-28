@@ -142,3 +142,70 @@ def test_build_room_splits_a_points_boundary_too(bridge):
     walls.append(loop(A))
     server.build_room(points=B, floor="none")
     assert len(built(sent)["wall_runs"]) == 1
+
+
+# regression: a boundary already walled all round (the same room built twice,
+# or a floor laid inside existing walls) sent wall_runs=[], which the bridge
+# refused as "must be a non-empty list", so the floor was never built either.
+def test_a_fully_walled_boundary_draws_no_wall_and_still_builds_the_floor(bridge):
+    walls, sent = bridge
+    walls.append(loop(A))
+    result = server.build_room(rect=[0, 0, 512, 512], floor_asset="res://floor.png")
+    params = built(sent)
+    assert params["wall_runs"] == []
+    assert params["floor_asset"] == "res://floor.png"
+    assert result["wall_ids"] == []
+    assert len(result["shared_edges"]) == 4
+
+
+def test_a_wall_of_another_type_is_not_shared(bridge):
+    walls, sent = bridge
+    walls.append({**loop(A), "wall_type": 2})
+    result = server.build_room(rect=[512, 0, 512, 512], floor="none")
+    assert "wall_runs" not in built(sent)
+    assert "shared_edges" not in result
+
+
+def test_a_wall_of_the_same_type_is_shared(bridge):
+    walls, sent = bridge
+    walls.append({**loop(A), "wall_type": 1})
+    server.build_room(rect=[512, 0, 512, 512], floor="none", wall_type=1)
+    assert len(built(sent)["wall_runs"]) == 1
+
+
+def test_a_wall_of_another_asset_is_not_shared_when_the_asset_is_named(bridge):
+    walls, sent = bridge
+    walls.append({**loop(A), "wall_type": 0, "asset": "res://walls/stone.png"})
+    server.build_room(rect=[512, 0, 512, 512], floor="none", wall_asset="res://walls/wood.png")
+    assert "wall_runs" not in built(sent)
+
+
+def test_a_wall_of_the_named_asset_is_shared(bridge):
+    walls, sent = bridge
+    walls.append({**loop(A), "wall_type": 0, "asset": "res://walls/wood.png"})
+    server.build_room(rect=[512, 0, 512, 512], floor="none", wall_asset="res://walls/wood.png")
+    assert len(built(sent)["wall_runs"]) == 1
+
+
+def test_walls_past_the_read_limit_are_reported(bridge, monkeypatch):
+    walls, _ = bridge
+    walls.append(loop(A))
+    monkeypatch.setattr(
+        server,
+        "_read_all",
+        lambda kind, **_: (
+            list(walls),
+            {"kind": kind, "total": 9000, "read": 1, "complete": False},
+        ),
+    )
+    result = server.build_room(rect=[512, 0, 512, 512], floor="none")
+    assert result["walls_considered"] == {"total": 9000, "read": 1, "complete": False}
+    assert "8999" in result["note"]
+
+
+def test_a_complete_wall_read_adds_no_note(bridge):
+    walls, _ = bridge
+    walls.append(loop(A))
+    result = server.build_room(rect=[512, 0, 512, 512], floor="none")
+    assert "note" not in result
+    assert "walls_considered" not in result

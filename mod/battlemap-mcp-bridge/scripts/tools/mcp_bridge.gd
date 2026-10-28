@@ -4754,11 +4754,13 @@ func _build_room(req : Dictionary) -> Dictionary:
 
 	# wall_runs: the server found part of this boundary already walled (a
 	# neighbouring room), so draw only the uncovered runs, each an open wall.
+	# An empty list means all of it is walled already: draw no wall at all.
+	var split := req.has("wall_runs")
 	var runs := []
-	if req.has("wall_runs"):
+	if split:
 		runs = req["wall_runs"]
-		if typeof(runs) != TYPE_ARRAY or runs.empty():
-			return _err("'wall_runs' must be a non-empty list of point lists")
+		if typeof(runs) != TYPE_ARRAY:
+			return _err("'wall_runs' must be a list of point lists")
 		for run in runs:
 			if typeof(run) != TYPE_ARRAY or run.size() < 2:
 				return _err("each of 'wall_runs' needs >= 2 [x,y] pairs")
@@ -4767,10 +4769,10 @@ func _build_room(req : Dictionary) -> Dictionary:
 	var drawn := []
 
 	# 1) Walls along the boundary: one loop, or the given open runs.
-	var paths := [pts_raw] if runs.empty() else runs
+	var paths := runs if split else [pts_raw]
 	for path in paths:
 		var wall_res = _draw_wall({
-			"points": path, "loop": runs.empty(),
+			"points": path, "loop": not split,
 			"asset": req.get("wall_asset", ""),
 			"type": req.get("wall_type", 0), "joint": req.get("wall_joint", 1),
 			"shadow": req.get("wall_shadow", true),
@@ -4780,10 +4782,10 @@ func _build_room(req : Dictionary) -> Dictionary:
 				return wall_res
 			return _room_rollback(drawn, wall_res.get("error"))
 		drawn.append(wall_res["result"].get("id"))
-	if runs.empty():
-		result["wall_id"] = drawn[0]
-	else:
+	if split:
 		result["wall_ids"] = drawn
+	else:
+		result["wall_id"] = drawn[0]
 
 	# 2) Floor along the SAME boundary (no inset — the wall covers the seam).
 	var floor_kind = str(req.get("floor", "pattern"))
@@ -6430,6 +6432,11 @@ func _describe(node, want_points : bool = true, want_opaque : bool = false) -> D
 	var loop = node.get("Loop")
 	if loop != null:
 		d["loop"] = bool(loop)
+	# 0=auto, 1=manual, 2=cave: build_room shares a wall only with its own type.
+	if d.get("kind") == "wall":
+		var wall_type = node.get("Type")
+		if wall_type != null:
+			d["wall_type"] = int(wall_type)
 
 	if want_points:
 		var pts = node.get("Points")
