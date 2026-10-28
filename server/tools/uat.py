@@ -3148,6 +3148,57 @@ def packs_and_exports(u: Uat) -> None:
     u.check("assets: a pack the map lacks previews but does not place", preview_unincluded_pack)
 
 
+@group("trace_image")
+def trace_image(u: Uat) -> None:
+    """The trace image goes where it is put, stays there on a retry, and saves."""
+    import tempfile
+
+    from PIL import Image
+
+    def position_is_set_and_saved():
+        st = u.c.request("get_status")
+        map_file = st.get("map_file")
+        if not map_file:
+            return "skipped: the map has never been saved, so it cannot be reopened"
+        target = [u.cx + 300.0, u.cy - 200.0]
+        with tempfile.TemporaryDirectory() as folder:
+            sketch = pathlib.Path(folder) / "uat-trace.png"
+            Image.new("RGB", (512, 512), (200, 200, 200)).save(sketch)
+            u.c.request("set_trace_image", path=str(sketch), center=True)
+            try:
+                first = u.c.request("set_trace_image", position=target)
+                again = u.c.request("set_trace_image", position=target)
+                assert first["position"] == target, f"placed at {first['position']}"
+                assert again["position"] == target, f"a retry moved it to {again['position']}"
+                centred = u.c.request("set_trace_image", center=True)
+                assert centred["position"] == st["map_center"], centred
+                u.c.request("set_trace_image", position=target)
+                u.c.request("save_map")
+                time.sleep(1.0)
+                assert u.wait_for_save(), "save did not finish"
+                u.c.request("open_map", path=map_file)
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    time.sleep(0.5)
+                    try:
+                        now = u.c.request("get_status")
+                    except Exception:
+                        continue
+                    if now.get("map_open") and now.get("undo_depth") == 0:
+                        break
+                back = u.c.request("set_trace_image", opacity=0.5)
+                assert back["position"] == target, f"reopened at {back['position']}"
+            finally:
+                u.c.request("set_trace_image", clear=True)
+        return f"at {target} after a retry and after save and reopen; center resets it"
+
+    u.check(
+        "trace_image: position is set, safe to repeat, and survives save and reopen",
+        position_is_set_and_saved,
+        needs_dirty=True,
+    )
+
+
 @group("lights")
 def lights(u: Uat) -> None:
     """A light with its object, a batch of lights, and light edits: one undo step each."""

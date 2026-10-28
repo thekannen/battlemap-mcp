@@ -1593,17 +1593,23 @@ func _set_trace_image(req : Dictionary) -> Dictionary:
 	if bool(req.get("center", false)) and trace.has_method("Center"):
 		trace.Center()
 		applied["centered"] = true
-	if req.has("offset_x") or req.has("offset_y"):
-		var moved = Global.World.get("TraceImage")
-		if moved == null or not is_instance_valid(moved) or not (moved is Node2D):
+	# Where the image's centre sits, set rather than nudged, so a retried call
+	# lands in the same place. Dungeondraft saves it with the map.
+	if req.has("position"):
+		var at = req["position"]
+		if typeof(at) != TYPE_ARRAY or at.size() != 2:
 			_release_tool(trace, was_active)
-			return _err("no trace image to offset; load one with path first")
-		var delta = Vector2(float(req.get("offset_x", 0.0)), float(req.get("offset_y", 0.0)))
-		moved.position += delta
-		applied["offset"] = _vec(delta)
+			return _err("'position' must be [x, y] in woxels")
+		var moved = Global.World.get("TraceImage")
+		if moved == null or not is_instance_valid(moved) or not (moved is Node2D) \
+				or moved.get("texture") == null:
+			_release_tool(trace, was_active)
+			return _err("no trace image to position; load one with path first")
+		moved.position = Vector2(float(at[0]), float(at[1]))
+		applied["positioned"] = true
 	_release_tool(trace, was_active)
 	if applied.empty():
-		return _err("give at least one of path, scale, opacity, center, offset_x, offset_y or clear")
+		return _err("give at least one of path, scale, opacity, center, position or clear")
 	# Read back what is drawn, not what was asked: the Sprite, not the flag.
 	var sprite = Global.World.get("TraceImage")
 	var drawn := false

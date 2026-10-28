@@ -79,7 +79,7 @@ The following is the public MCP tool surface; the companion may perform several 
 | `set_verbose` | `on` |
 | `log_marker` | `text` |
 | `paint_material` | `points`, `asset`, `size`, `layer`, `smooth`, `erase` |
-| `set_trace_image` | `path`, `scale`, `opacity`, `center`, `offset_x`, `offset_y`, `clear` |
+| `set_trace_image` | `path`, `scale`, `opacity`, `center`, `position`, `clear` |
 | `get_map_style` | — |
 | `set_map_style` | `building_wear`, `grid_style` |
 | `set_water_style` | `deep_color`, `shallow_color`, `blend_distance`, `border` |
