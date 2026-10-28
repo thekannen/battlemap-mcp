@@ -1274,6 +1274,53 @@ def colour(u: Uat) -> None:
 
     u.check("a refused recolour changes nothing", still_original)
 
+    # Placed without a colour, a colourable asset stays on the direct path and
+    # untinted: the note names Dungeondraft's default for the model to choose,
+    # and that colour, once chosen, is kept by the map file.
+    def default_named_not_applied():
+        r = u.c.request("place_object", asset=asset, x=u.cx, y=u.cy - 512)
+        try:
+            if float(r.get("mask_fraction", 0.0)) < 0.25:
+                return f"skipped: {short} is only partly masked ({r.get('mask_fraction')})"
+            assert "color" not in r and not r.get("color_defaulted"), f"colour applied: {r}"
+            assert r.get("placed_via") != "ObjectTool", f"took the tinted path: {r}"
+            assert "#6b3834" in r.get("note", ""), f"note does not name the default: {r}"
+        finally:
+            u.c.request("delete_element", id=r["id"])
+        map_file = u.c.request("get_status").get("map_file")
+        if not map_file:
+            return "skipped: the map has never been saved, so it cannot be reopened"
+        chosen = u.c.request("place_object", asset=asset, x=u.cx, y=u.cy - 768, color="#6b3834")
+        u.c.request("save_map")
+        time.sleep(1.0)
+        assert u.wait_for_save(), "save did not finish"
+        u.c.request("open_map", path=map_file)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            time.sleep(0.5)
+            try:
+                if u.c.request("get_status").get("undo_depth") == 0:
+                    break
+            except Exception:
+                continue
+        # Ids are not kept across a reopen: find the object where it was put.
+        listed = u.c.request("list_elements", kind="objects", limit=500)["elements"]
+        # A disposable map may hold copies from earlier runs at the same spot.
+        here = [
+            e for e in listed if e.get("asset") == asset and e.get("position") == [u.cx, u.cy - 768]
+        ]
+        for e in here:
+            u.c.request("delete_element", id=e["id"])
+        assert here, f"nothing at the placed spot after reopen (placed id {chosen['id']})"
+        assert all(e.get("color") == "#6b3834" for e in here), [e.get("color") for e in here]
+        return f"{short}: untinted with the hint; #6b3834 chosen survives save and reopen"
+
+    u.check(
+        "colourable: the default is named, not applied, and survives when chosen",
+        default_named_not_applied,
+        needs_dirty=True,
+    )
+
 
 @group("hooks")
 def hooks(u: Uat) -> None:
