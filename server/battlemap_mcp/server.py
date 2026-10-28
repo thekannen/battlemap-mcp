@@ -4735,10 +4735,15 @@ def add_level(label: str = "Level") -> dict:
 
 @tool()
 def set_grid(visible: bool) -> dict:
-    """Show or hide the grid in the editor view. Returns {grid_visible}.
+    """Show or hide the grid in the editor view. Returns {grid_visible, grid_toggle}.
 
-    This changes only what the editor (and so screenshot) shows. Exports keep
-    their own `grid` option and put the editor grid back afterwards.
+    It works the View menu's own grid checkbox, so the menu and the screen
+    agree; grid_toggle is that checkbox's state. This changes only what the
+    editor (and so screenshot) shows. Exports keep their own `grid` option and
+    put the editor grid back afterwards.
+
+    It is not saved: neither the map file nor Dungeondraft's settings keep it,
+    so opening a map or restarting Dungeondraft shows the grid again.
     """
     if not isinstance(visible, bool):
         raise ValidationError(f"visible must be true or false, got {visible!r}")

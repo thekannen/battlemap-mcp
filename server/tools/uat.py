@@ -2489,6 +2489,28 @@ def settings(u: Uat) -> None:
         updates._result = notice_saved
 
 
+@group("editor_grid")
+def editor_grid(u: Uat) -> None:
+    """set_grid works the View menu's checkbox, so the menu matches the screen."""
+
+    # regression: set_grid flipped GridMesh.visible behind the editor's back, so
+    # the View menu's checkbox showed the opposite of the screen and the user's
+    # next click on it did the opposite of what they expected.
+    def checkbox_follows_the_grid():
+        seen = []
+        try:
+            for want in (False, True, False):
+                r = u.c.request("set_grid", visible=want)
+                assert r["grid_visible"] is want, f"grid {r['grid_visible']} for {want}"
+                assert r["grid_toggle"] is want, f"checkbox {r['grid_toggle']} for {want}"
+                seen.append(want)
+        finally:
+            u.c.request("set_grid", visible=True)
+        return f"grid and View-menu checkbox agree through {seen}"
+
+    u.check("editor_grid: the View menu checkbox follows set_grid", checkbox_follows_the_grid)
+
+
 @group("checkpoint")
 def checkpoint(u: Uat) -> None:
     """Runtime behavior and validation."""

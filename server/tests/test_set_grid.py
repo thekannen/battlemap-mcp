@@ -14,15 +14,20 @@ def sent(monkeypatch):
 
     def request(command, **params):
         calls.append((command, params))
-        return {"grid_visible": params.get("visible")}
+        return {"grid_visible": params.get("visible"), "grid_toggle": params.get("visible")}
 
     monkeypatch.setattr(server.bridge, "request", request)
     return calls
 
 
 def test_set_grid_sends_visible(sent):
-    assert server.set_grid(False) == {"grid_visible": False}
+    assert server.set_grid(False) == {"grid_visible": False, "grid_toggle": False}
     assert sent == [("set_grid", {"visible": False})]
+
+
+def test_set_grid_docstring_says_it_is_not_saved():
+    doc = server.set_grid.__doc__ or ""
+    assert "View menu" in doc and "not saved" in doc
 
 
 @pytest.mark.parametrize("bad", ["no", 0, None])

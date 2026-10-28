@@ -5694,8 +5694,22 @@ func _set_grid(req : Dictionary) -> Dictionary:
 	var grid_mesh = Global.World.get("GridMesh")
 	if grid_mesh == null:
 		return _err("this map has no grid mesh to show or hide")
-	grid_mesh.visible = bool(req["visible"])
-	return _ok({ "grid_visible": grid_mesh.visible })
+	# Drive the View menu's own checkbox, so it and the grid agree: pressing it
+	# runs Editor._on_GridToggle_toggled. Setting GridMesh.visible behind its
+	# back left the checkbox showing the opposite of the screen.
+	var toggle = Global.Editor.get("GridToggle")
+	if toggle == null or not (toggle is BaseButton) or not Global.Editor.has_method("ToggleGrid"):
+		return _err("this build exposes no Editor.GridToggle/ToggleGrid to drive")
+	var want = bool(req["visible"])
+	toggle.pressed = want
+	# pressed emits toggled only on a change; if the grid already disagreed
+	# with the checkbox, bring it into line through the editor too.
+	if grid_mesh.visible != want:
+		Global.Editor.ToggleGrid(want)
+	if toggle.pressed != grid_mesh.visible:
+		return _err("the grid shows %s but the View menu's checkbox says %s"
+			% [str(grid_mesh.visible), str(toggle.pressed)])
+	return _ok({ "grid_visible": grid_mesh.visible, "grid_toggle": toggle.pressed })
 
 func _set_map_size(req : Dictionary) -> Dictionary:
 	if not req.has("width") or not req.has("height"):
