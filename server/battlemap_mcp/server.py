@@ -41,6 +41,7 @@ from . import (
     arrangement,
     cropping,
     handshake,
+    image_import,
     installer,
     layout,
     lifecycle,
@@ -2081,6 +2082,111 @@ def _light_params(spec: object, where: str, model: type[LightSpec] = LightSpec) 
         if item.y is not None:
             params["y"] = item.y
     return params
+
+
+@tool()
+def refresh_asset_packs() -> dict:
+    """Rescan and mount newly written native asset packs without restarting.
+
+    Does not include them in the open map or reload already-cached textures.
+    After writing a pack in the configured asset directory, call this, then
+    prepare_map_with_packs with its id. Existing map pack selection is kept.
+    """
+    return bridge.request("refresh_asset_packs")
+
+
+class PackImage(BaseModel):
+    """A PNG and its searchable library name and tags."""
+
+    model_config = ConfigDict(extra="forbid")
+    path: str
+    name: str
+    tags: list[str]
+
+
+@tool()
+def create_image_pack(
+    path: str,
+    name: str,
+    images: list[PackImage],
+    pack_id: str = "",
+    author: str = "",
+) -> dict:
+    """Build a native, reusable .dungeondraft_pack of named, tagged PNG objects.
+
+    Choose a name related to the map/project. Each image needs path, name and
+    descriptive tags (e.g. furniture, workshop, oak). PNG alpha is preserved.
+    path: absolute NEW output file; existing files are never overwritten.
+    pack_id: optional eight alphanumeric characters; generated if omitted.
+    This is a complete pack, not an append operation on a third-party pack.
+    To extend a collection, supply all its images to a new output filename.
+    Prefer a new id during a live session; Dungeondraft caches loaded pack ids.
+
+    For discovery, write into the configured asset directory. Call refresh_asset_packs, then use
+    prepare_map_with_packs to include the returned id in a saved map copy.
+    This command does not open maps, change enabled packs, or restart the app.
+    Embedded imports are immediately usable but do not enter the library;
+    these pack assets become searchable by name/tags once included and loaded.
+    """
+    entries = [PackImage.model_validate(item).model_dump() for item in images]
+    return image_import.build_pack(path, name, entries, pack_id, author)
+
+
+@tool()
+def import_image(
+    path: str,
+    x: float,
+    y: float,
+    width: float,
+    height: float | None = None,
+    rotation: float = 0.0,
+    sorting: int = 0,
+    layer: int = 100,
+    block_light: bool = False,
+    snap: str = "",
+) -> dict:
+    """Import a local PNG as a normal, embedded object (not a trace).
+
+    x, y: centre in woxels; width, height: unrotated size in woxels.
+    Omit height to preserve aspect ratio. Rotation is in degrees. Transparent
+    pixels are preserved. The saved map contains the image and needs no pack
+    or original file. Use the returned id with normal object tools and undo.
+    PNG only, at most 32 MiB, 8192 pixels per side and 16 million pixels.
+    Embedded images are not searchable library assets; use a tagged asset
+    pack for reusable library entries. Reimporting changed bytes creates a new
+    embedded texture; importing identical bytes reuses the texture.
+    """
+    source = Path(path).expanduser()
+    if not source.is_absolute() or not source.is_file():
+        raise ValidationError("path must be an absolute path to a local PNG file")
+    if source.suffix.lower() != ".png":
+        raise ValidationError("only PNG images are supported")
+    if source.stat().st_size > 32 * 1024 * 1024:
+        raise ValidationError("PNG must not exceed 32 MiB")
+    image_import.read_png(str(source))
+    require_finite(x, "x")
+    require_finite(y, "y")
+    require_positive(width, "width")
+    if height is not None:
+        require_positive(height, "height")
+    require_finite(rotation, "rotation")
+    require_choice(sorting, [0, 1], "sorting")
+    require_choice(layer, OBJECT_LAYERS, "layer")
+    grid, snap_info = _snap_grid(snap)
+    x, y = _snap_xy(grid, x, y)
+    params = dict(
+        path=source.resolve().as_posix(),
+        x=x,
+        y=y,
+        width=width,
+        rotation=rotation,
+        sorting=sorting,
+        layer=layer,
+        block_light=block_light,
+    )
+    if height is not None:
+        params["height"] = height
+    return _with_snap(bridge.request("import_image", **params), snap_info)
 
 
 @tool()

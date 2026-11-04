@@ -64,6 +64,7 @@ SERVER_FILES = (
     "layout.py",
     "lifecycle.py",
     "mapfile.py",
+    "image_import.py",
     "placement.py",
     "preflight.py",
     "scene.py",

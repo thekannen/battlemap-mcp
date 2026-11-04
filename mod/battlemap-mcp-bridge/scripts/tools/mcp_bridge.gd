@@ -48,7 +48,7 @@ const IDLE_MS := 30000
 
 # Commands that get wrapped in a Dungeondraft undo record (see _record_and_dispatch).
 const CREATE_CMDS := [
-	"place_object", "draw_wall", "draw_path", "add_light",
+	"import_image", "place_object", "draw_wall", "draw_path", "add_light",
 	"add_portal", "add_roof", "add_text", "duplicate_object",
 ]
 const TRANSFORM_CMDS := ["move_element", "modify_object"]
@@ -2261,6 +2261,8 @@ func _safe_dispatch(req : Dictionary) -> Dictionary:
 		"select_tool": return _select_tool(req)
 		"list_tool_controls": return _list_tool_controls(req)
 		# --- create ---
+		"refresh_asset_packs": return _refresh_asset_packs()
+		"import_image": return _import_image(req)
 		"place_object": return _place_object(req)
 		"place_objects": return _place_objects(req)
 		"merge_walls": return _merge_walls(req)
@@ -2411,6 +2413,16 @@ func _mesh_has_geometry(node) -> bool:
 	return mesh.get_surface_count() > 0
 
 const PACKS_DIR := "res://packs"
+
+# The same refresh used by the Assets window. It mounts new archives and
+# rebuilds Master.AssetPacks; it does not load their textures or change Header.
+func _refresh_asset_packs() -> Dictionary:
+	var window = Global.Editor.Windows.get("Assets")
+	if window == null or not window.has_method("UpdateTree"):
+		return _err("this editor cannot refresh packs through its Assets window")
+	window.UpdateTree(true)
+	_asset_index = {}
+	return _list_asset_packs()
 
 func _list_asset_packs() -> Dictionary:
 	var installed := []
@@ -3932,6 +3944,85 @@ func _delete_level(req : Dictionary) -> Dictionary:
 	return _ok({ "deleted_id": id, "label": label,
 		"level_count": Global.World.levels.size(),
 		"note": "not undoable through this bridge" })
+
+# Use the same native embedded-image path as dropping a PNG onto the map.
+# Content-addressed staging avoids EmbedObject's filename cache returning old
+# pixels when a generated image is revised in place. Native SaveEmbedded writes
+# the PNG bytes into the map; neither staging nor the source is needed to reopen.
+func _import_image(req : Dictionary) -> Dictionary:
+	var bad_sort = _bad_sorting(req)
+	if bad_sort != null: return bad_sort
+	var bad_layer = _bad_layer(req)
+	if bad_layer != null: return bad_layer
+	for key in ["x", "y", "width", "rotation", "height"]:
+		if key == "height" and not req.has(key): continue
+		var value = req.get(key, 0.0)
+		if not (typeof(value) in [TYPE_INT, TYPE_REAL]) or is_nan(float(value)) or is_inf(float(value)):
+			return _err(key + " must be finite")
+		if key in ["width", "height"] and float(value) <= 0:
+			return _err(key + " must be positive")
+	var path = str(req.get("path", ""))
+	if not path.is_abs_path() or path.begins_with("res://") or path.begins_with("user://") or path.get_extension().to_lower() != "png":
+		return _err("path must be an absolute local PNG path")
+	var f = File.new()
+	if f.open(path, File.READ) != OK: return _err("cannot read PNG")
+	var length = f.get_len()
+	if length < 24 or length > 33554432:
+		f.close()
+		return _err("PNG must be between 24 bytes and 32 MiB")
+	var bytes = f.get_buffer(length)
+	f.close()
+	# Check IHDR before decoding, so an oversized image cannot allocate first.
+	if bytes.subarray(0, 7).hex_encode() != "89504e470d0a1a0a" or bytes.subarray(12, 15).get_string_from_ascii() != "IHDR":
+		return _err("invalid PNG header")
+	var pw = 0
+	var ph = 0
+	for i in range(4):
+		pw = pw * 256 + int(bytes[16 + i])
+		ph = ph * 256 + int(bytes[20 + i])
+	if pw < 1 or ph < 1 or pw > 8192 or ph > 8192 or pw * ph > 16000000:
+		return _err("PNG exceeds 8192 pixels per side or 16 million pixels")
+	var img = Image.new()
+	if img.load_png_from_buffer(bytes) != OK or img.is_empty(): return _err("invalid PNG image")
+	var level = Global.World.GetCurrentLevel()
+	if level == null: return _err("no map open")
+	var object_tool = Global.Editor.Tools.get("ObjectTool")
+	if object_tool == null or not object_tool.has_method("EmbedObject"):
+		return _err("this Dungeondraft version has no native EmbedObject")
+	var digest = HashingContext.new()
+	digest.start(HashingContext.HASH_SHA256)
+	digest.update(bytes)
+	var folder = _state_directory().plus_file("imported_images")
+	var directory = Directory.new()
+	if directory.make_dir_recursive(folder) != OK: return _err("cannot create import staging directory")
+	var staged = folder.plus_file(digest.finish().hex_encode() + ".png")
+	if f.open(staged, File.WRITE) != OK: return _err("cannot stage PNG")
+	f.store_buffer(bytes)
+	f.flush()
+	var write_error = f.get_error()
+	f.close()
+	if write_error != OK: return _err("could not finish staging PNG; no object was imported")
+	var before = level.Objects.get_children()
+	object_tool.EmbedObject(staged)
+	var prop = null
+	for child in level.Objects.get_children():
+		if not (child in before): prop = child
+	if prop == null: return _err("native image import created no object")
+	_mark_saveable(prop)
+	level.Objects.RemoveFromSearchTable(prop)
+	prop.z_index = int(req.get("layer", DEFAULT_OBJECT_LAYER))
+	var under = int(req.get("sorting", 0)) == 1
+	if under: level.Objects.move_child(prop, 0)
+	level.Objects.AddToSearchTable(prop, under)
+	prop.position = Vector2(float(req.get("x", 0)), float(req.get("y", 0)))
+	var width = float(req.get("width", 256))
+	var height = float(req.get("height", width * ph / pw))
+	prop.scale = Vector2(width / pw, height / ph)
+	prop.rotation = deg2rad(float(req.get("rotation", 0)))
+	_apply_block_light(prop, bool(req.get("block_light", false)))
+	return _ok({ "id": _id(prop), "position": _vec(prop.position), "layer": prop.z_index,
+		"size": [width, height], "texture_size": [pw, ph], "embedded": true,
+		"asset": prop.Texture.resource_path })
 
 func _place_object(req : Dictionary) -> Dictionary:
 	var light_spec = req.get("light", null)

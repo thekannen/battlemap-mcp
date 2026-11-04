@@ -235,6 +235,11 @@ def test_verify_live_covers_every_tool_that_can_be_checked_live():
         # Reads map files from disk and sends no bridge command at all.
         # Covered with synthetic maps in test_mapfile.
         "inspect_map_file",
+        # Dedicated tests/test_image_import.py and tools/verify_image_import.py
+        # require a local PNG and an explicit output directory, not stock assets.
+        "import_image",
+        "create_image_pack",
+        "refresh_asset_packs",
         "arrange_objects",
     }
     missing = tools - covered - cannot_check
