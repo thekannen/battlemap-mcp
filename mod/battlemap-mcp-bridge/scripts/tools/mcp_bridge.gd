@@ -325,22 +325,61 @@ func _unix_execute(executable: String, arguments: Array) -> int:
 	return result
 
 func _powershell_token_check(script: String, path: String, reset: bool) -> int:
+	# Godot 3.4's blocking execute goes through _wpopen (cmd.exe), which
+	# flashes a console even when PowerShell requests a hidden window. Start
+	# the GUI script host asynchronously instead; it starts PowerShell hidden.
+	var crypto = ClassDB.instance("Crypto")
+	if crypto == null:
+		return 1
+	var random = crypto.generate_random_bytes(80)
+	if random.size() != 80:
+		return 1
+	var proof = random.subarray(0, 31).hex_encode()
+	var failure_proof = random.subarray(32, 63).hex_encode()
+	var report_path = OS.get_user_data_dir().plus_file("mcp-token-check-" + random.subarray(64, 79).hex_encode() + ".txt")
+	var launcher = str(Global.get("Root", "")).plus_file("windows_token_check.js")
+	if not File.new().file_exists(launcher):
+		print("[mcp-bridge] token storage: missing Windows token-check launcher")
+		return 1
 	# -Command reparses arguments as source. Encode an ASCII script with a
 	# base64 path instead, including paths containing quotes or metacharacters.
 	var source = "$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + Marshalls.raw_to_base64(path.to_utf8()) + "'));$reset=" + ("$true;" if reset else "$false;") + script
+	# Keep the native script's exit behavior, recording its outcome before it
+	# exits. finally also runs on exit. Only a successful check publishes the
+	# unpredictable proof, so replacing a failure report cannot forge success.
+	source = source.replace("exit 0", "$global:mcpExit=0;exit 0")
+	source = "$global:mcpExit=1;$mcpMessages=[Collections.Generic.List[string]]::new();try { & {\n" + source + "\n} 2>&1 | ForEach-Object {$mcpMessages.Add([string]$_)} } finally {\n$mcpReport=if($global:mcpExit -eq 0){'" + proof + "'}else{'" + failure_proof + "'+[Environment]::NewLine+($mcpMessages -join [Environment]::NewLine)}\n$mcpPath=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + Marshalls.raw_to_base64(report_path.to_utf8()) + "'))\n$mcpFile=[IO.File]::Open($mcpPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)\ntry {$bytes=[Text.Encoding]::UTF8.GetBytes($mcpReport);$mcpFile.Write($bytes,0,$bytes.Length)} finally {$mcpFile.Dispose()}\n}\n"
 	var ascii_bytes = source.to_utf8()
 	var utf16 = PoolByteArray()
 	utf16.resize(ascii_bytes.size() * 2)
 	for i in range(ascii_bytes.size()):
 		utf16[i * 2] = ascii_bytes[i]
 		utf16[i * 2 + 1] = 0
-	var powershell = OS.get_environment("SystemRoot").plus_file("System32/WindowsPowerShell/v1.0/powershell.exe")
-	var output = []
-	var result = OS.execute(powershell, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Marshalls.raw_to_base64(utf16)], true, output)
-	if result != 0:
-		for message in output:
-			print("[mcp-bridge] " + str(message).strip_edges())
-	return result
+	var host = OS.get_environment("SystemRoot").plus_file("System32/wscript.exe")
+	var child = OS.execute(host, ["//B", "//NoLogo", launcher, Marshalls.raw_to_base64(utf16)], false)
+	if child < 0:
+		print("[mcp-bridge] token storage: could not start Windows token-check launcher")
+		return 1
+	var deadline = OS.get_ticks_msec() + 30000
+	var report = File.new()
+	while OS.get_ticks_msec() < deadline:
+		if report.file_exists(report_path) and report.open(report_path, File.READ) == OK:
+			var message = report.get_buffer(min(report.get_len(), 65536)).get_string_from_utf8()
+			report.close()
+			Directory.new().remove(report_path)
+			OS.kill(child)
+			if message == proof:
+				return 0
+			if message.begins_with(failure_proof + "\n") or message.begins_with(failure_proof + "\r\n"):
+				print("[mcp-bridge] token storage: " + message.substr(failure_proof.length()).strip_edges())
+			else:
+				print("[mcp-bridge] token storage: invalid Windows token-check report")
+			return 1
+		OS.delay_msec(10)
+	OS.kill(child)
+	Directory.new().remove(report_path)
+	print("[mcp-bridge] token storage: Windows token check timed out (Windows Script Host may be disabled)")
+	return 1
 
 func _harden_token_file(reset: bool = false) -> bool:
 	var path = _token_path()

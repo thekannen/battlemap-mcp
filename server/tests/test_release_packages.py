@@ -58,6 +58,7 @@ def test_mod_archive_has_exact_payload_bytes(checkout, tmp_path):
         assert set(zipped.namelist()) == {
             "battlemap-mcp-bridge/mcp_bridge.ddmod",
             "battlemap-mcp-bridge/scripts/tools/mcp_bridge.gd",
+            "battlemap-mcp-bridge/windows_token_check.js",
             "battlemap-mcp-bridge/LICENSE",
             "battlemap-mcp-bridge/icons/mcp_bridge.png",
         }
@@ -236,6 +237,7 @@ def test_local_artifacts_do_not_block_packaging(checkout, tmp_path):
     assert names == {
         "battlemap-mcp-bridge/mcp_bridge.ddmod",
         "battlemap-mcp-bridge/scripts/tools/mcp_bridge.gd",
+        "battlemap-mcp-bridge/windows_token_check.js",
         "battlemap-mcp-bridge/LICENSE",
         "battlemap-mcp-bridge/icons/mcp_bridge.png",
     }

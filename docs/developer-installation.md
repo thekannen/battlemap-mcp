@@ -41,4 +41,10 @@ updates, pull the intended revision, rebuild/reinstall its wheel, then replace
 the matching mod before restarting Dungeondraft and reconnecting the MCP client.
 Nothing automatically updates during normal startup.
 
+On Windows the bridge uses Windows Script Host (`wscript.exe`, JScript) to
+start its PowerShell token-permission checks without console windows. If policy
+disables that host, the checks fail and the bridge refuses to start; they are
+never skipped. A missing launcher is reported immediately; an unavailable or
+blocked host times out after 30 seconds.
+
 See [Building and releasing packages](releases.md) for versioning and Actions.
