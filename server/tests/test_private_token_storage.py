@@ -344,6 +344,7 @@ def test_token_persistence_in_isolated_engine(tmp_path, failure):
         assert match is not None
         funcs.append(match.group(0))
     token = tmp_path.resolve() / "storage" / "token"
+    funcs[2] = funcs[2].replace("OS.get_user_data_dir()", json.dumps(str(tmp_path)))
     if failure == "type":
         if sys.platform not in ("win32", "darwin"):
             pytest.skip("Windows/macOS permission diagnostics")
@@ -373,6 +374,9 @@ class FailingFile:
     harness = tmp_path / "token_probe.gd"
     harness.write_text(
         'extends SceneTree\nconst TOKEN_FILE = "storage/token"\n'
+        + 'var Global = {"Root": '
+        + json.dumps(str(MOD.parents[2]))
+        + "}\n"
         + fake
         + '\nfunc _token_path():\n\treturn OS.get_environment("TOKEN_TEST_PATH")\n\n'
         + "\n".join(funcs)

@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MOD_FILES = (
     "mcp_bridge.ddmod",
     "scripts/tools/mcp_bridge.gd",
+    "windows_token_check.js",
     "LICENSE",
     "icons/mcp_bridge.png",
 )
