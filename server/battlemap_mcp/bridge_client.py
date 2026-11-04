@@ -44,6 +44,7 @@ TOKEN_REJECTED = "bad or missing token"
 COMPANION_TOOLS = frozenset(
     {
         "arrange_objects",
+        "create_image_pack",
         "clear_captures",
         "crop_map",
         "export_dd2vtt",
