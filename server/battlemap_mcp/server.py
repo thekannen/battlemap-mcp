@@ -41,6 +41,7 @@ from . import (
     arrangement,
     cropping,
     handshake,
+    image_import,
     installer,
     layout,
     lifecycle,
@@ -2081,6 +2082,64 @@ def _light_params(spec: object, where: str, model: type[LightSpec] = LightSpec) 
         if item.y is not None:
             params["y"] = item.y
     return params
+
+
+@tool()
+def import_image(
+    path: str,
+    x: float,
+    y: float,
+    width: float,
+    height: float | None = None,
+    rotation: float = 0.0,
+    sorting: int = 0,
+    layer: int = 100,
+    block_light: bool = False,
+    snap: str = "",
+) -> dict:
+    """Place a local PNG on the map as an object, as dragging it in would.
+
+    path: absolute path to a PNG the user named; never guess one.
+    x, y: centre in woxels; width, height: unrotated size in woxels.
+    Omit height to keep the aspect ratio. The size includes transparent
+    margins. rotation is degrees. Alpha is kept.
+    The saved map holds the image, so it reopens without the file. The
+    returned id works with move, modify, duplicate, delete, undo and
+    checkpoints. The image does not join the asset library, so list_assets
+    will not find it. Reimporting changed bytes makes a new texture.
+    PNG only: at most 32 MiB, 8192 px per side and 16 million pixels.
+    """
+    source = Path(path).expanduser()
+    if not source.is_absolute() or not source.is_file():
+        raise ValidationError("path must be an absolute path to a local PNG file")
+    if source.suffix.lower() != ".png":
+        raise ValidationError("only PNG images are supported")
+    if source.stat().st_size > image_import.MAX_BYTES:
+        raise ValidationError("PNG must not exceed 32 MiB")
+    require_finite(x, "x")
+    require_finite(y, "y")
+    require_positive(width, "width")
+    if height is not None:
+        require_positive(height, "height")
+    require_finite(rotation, "rotation")
+    require_choice(sorting, [0, 1], "sorting")
+    require_choice(layer, OBJECT_LAYERS, "layer")
+    image_import.read_png(str(source))
+    grid, snap_info = _snap_grid(snap)
+    x, y = _snap_xy(grid, x, y)
+    params: dict[str, Any] = dict(
+        path=source.resolve().as_posix(),
+        x=x,
+        y=y,
+        width=width,
+        rotation=rotation,
+        sorting=sorting,
+        layer=layer,
+        block_light=block_light,
+    )
+    if height is not None:
+        params["height"] = height
+    return _with_snap(bridge.request("import_image", **params), snap_info)
 
 
 @tool()

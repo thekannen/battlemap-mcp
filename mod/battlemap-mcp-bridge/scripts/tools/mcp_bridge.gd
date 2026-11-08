@@ -48,7 +48,7 @@ const IDLE_MS := 30000
 
 # Commands that get wrapped in a Dungeondraft undo record (see _record_and_dispatch).
 const CREATE_CMDS := [
-	"place_object", "draw_wall", "draw_path", "add_light",
+	"import_image", "place_object", "draw_wall", "draw_path", "add_light",
 	"add_portal", "add_roof", "add_text", "duplicate_object",
 ]
 const TRANSFORM_CMDS := ["move_element", "modify_object"]
@@ -116,6 +116,10 @@ const COLLECTIONS := {
 const META_SERVER := "mcp_bridge_server"
 const META_PORT := "mcp_bridge_port"
 const META_OWNER := "mcp_bridge_owner"
+
+const META_TOKEN := "mcp_bridge_token"
+# Every staged image name this process has embedded; see _import_image.
+const META_EMBEDDED := "mcp_bridge_embedded"
 
 var _instance_id := 0
 var _port := PORT
@@ -263,7 +267,29 @@ func _config_path() -> String:
 	var base = _state_directory()
 	return base.plus_file(CONFIG_FILE) if base != "" else ""
 
+func _reuse_process_token() -> String:
+	if OS.get_name() != "Windows" or not Engine.has_meta(META_TOKEN):
+		return ""
+	var kept = Engine.get_meta(META_TOKEN)
+	if typeof(kept) != TYPE_DICTIONARY or kept.get("path") != _token_path():
+		return ""
+	var token = kept.get("token")
+	if typeof(token) != TYPE_STRING or token.length() != 64:
+		return ""
+	var f = File.new()
+	if f.open(_token_path(), File.READ) != OK:
+		return ""
+	var persisted = f.get_as_text()
+	f.close()
+	return token if persisted == token else ""
+
 func _ensure_token() -> String:
+	var reused = _reuse_process_token()
+	if reused != "":
+		print("[mcp-bridge] reusing this session's verified token")
+		return reused
+	if Engine.has_meta(META_TOKEN):
+		Engine.remove_meta(META_TOKEN)
 	var f = File.new()
 	# Replace the old inode before writing: chmod does not revoke an already
 	# open handle held by another account. Never write a secret into that inode.
@@ -307,6 +333,8 @@ func _ensure_token() -> String:
 	if persisted != token:
 		print("[mcp-bridge] FATAL: token persistence verification failed; the bridge is OFF.")
 		return ""
+	if OS.get_name() == "Windows":
+		Engine.set_meta(META_TOKEN, {"path": _token_path(), "token": token})
 	return token
 
 # Godot 3 has no file-permission API, so use the native platform tools and
@@ -2261,6 +2289,7 @@ func _safe_dispatch(req : Dictionary) -> Dictionary:
 		"select_tool": return _select_tool(req)
 		"list_tool_controls": return _list_tool_controls(req)
 		# --- create ---
+		"import_image": return _import_image(req)
 		"place_object": return _place_object(req)
 		"place_objects": return _place_objects(req)
 		"merge_walls": return _merge_walls(req)
@@ -3932,6 +3961,146 @@ func _delete_level(req : Dictionary) -> Dictionary:
 	return _ok({ "deleted_id": id, "label": label,
 		"level_count": Global.World.levels.size(),
 		"note": "not undoable through this bridge" })
+
+const IMPORT_STAGING_KEEP := 100
+const PNG_MAX_BYTES := 33554432
+const PNG_MAX_SIDE := 8192
+const PNG_MAX_PIXELS := 16000000
+
+func _import_image(req : Dictionary) -> Dictionary:
+	var bad_sort = _bad_sorting(req)
+	if bad_sort != null: return bad_sort
+	var bad_layer = _bad_layer(req)
+	if bad_layer != null: return bad_layer
+	for key in ["x", "y", "width", "rotation", "height"]:
+		if key == "height" and not req.has(key): continue
+		var value = req.get(key, 0.0)
+		if not (typeof(value) in [TYPE_INT, TYPE_REAL]) or is_nan(float(value)) or is_inf(float(value)):
+			return _err(key + " must be finite")
+		if key in ["width", "height"] and float(value) <= 0:
+			return _err(key + " must be positive")
+	var path = str(req.get("path", ""))
+	if not path.is_abs_path() or path.begins_with("res://") or path.begins_with("user://") or path.get_extension().to_lower() != "png":
+		return _err("path must be an absolute local PNG path")
+	var level = Global.World.GetCurrentLevel()
+	if level == null: return _err("no map open")
+	var object_tool = Global.Editor.Tools.get("ObjectTool")
+	if object_tool == null or not object_tool.has_method("EmbedObject"):
+		return _err("this Dungeondraft version has no native EmbedObject")
+	if not ClassDB.can_instance("HashingContext"):
+		return _err("this build cannot hash the image")
+	var f = File.new()
+	if f.open(path, File.READ) != OK: return _err("cannot read PNG")
+	var length = f.get_len()
+	if length < 24 or length > PNG_MAX_BYTES:
+		f.close()
+		return _err("PNG must be between 24 bytes and 32 MiB")
+	var bytes = f.get_buffer(length)
+	f.close()
+	# Read the size from IHDR before decoding, so an oversized image is
+	# refused before anything is allocated for it.
+	if bytes.subarray(0, 7).hex_encode() != "89504e470d0a1a0a" or bytes.subarray(12, 15).get_string_from_ascii() != "IHDR":
+		return _err("invalid PNG header")
+	var pw = 0
+	var ph = 0
+	for i in range(4):
+		pw = pw * 256 + int(bytes[16 + i])
+		ph = ph * 256 + int(bytes[20 + i])
+	if pw < 1 or ph < 1 or pw > PNG_MAX_SIDE or ph > PNG_MAX_SIDE or pw * ph > PNG_MAX_PIXELS:
+		return _err("PNG exceeds 8192 pixels per side or 16 million pixels")
+	var img = Image.new()
+	if img.load_png_from_buffer(bytes) != OK or img.is_empty(): return _err("invalid PNG image")
+	var digest = ClassDB.instance("HashingContext")
+	digest.start(HASH_SHA256)
+	digest.update(bytes)
+	var folder = _state_directory().plus_file("imported_images")
+	var directory = Directory.new()
+	if directory.make_dir_recursive(folder) != OK: return _err("cannot create import staging directory")
+	var hashed = digest.finish().hex_encode()
+
+	var held = Engine.get_meta(META_EMBEDDED) if Engine.has_meta(META_EMBEDDED) else {}
+	var stem = "%s-p%d" % [hashed, OS.get_process_id()]
+	var staged = ""
+	for n in range(1000):
+		var candidate = folder.plus_file(stem + ("" if n == 0 else "-%d" % n) + ".png")
+		if _imported_here.has(candidate) or not held.has(candidate):
+			staged = candidate
+			break
+	if staged == "": return _err("no free name to stage the PNG under; restart Dungeondraft")
+	var staging_error = _stage_png(staged, bytes)
+	if staging_error != "": return _err(staging_error)
+	var prop = _embed_png(level, object_tool, staged)
+	if prop == null: return _err("native image import created no object")
+	if not str(prop.Texture.resource_path).begins_with("embedded://"):
+		level.Objects.RemoveFromSearchTable(prop)
+		prop.queue_free()
+		return _err("Dungeondraft could not name the imported texture, so the map would not save its image; no object was imported")
+	_imported_here[staged] = true
+	held[staged] = true
+	Engine.set_meta(META_EMBEDDED, held)
+	_mark_saveable(prop)
+	level.Objects.RemoveFromSearchTable(prop)
+	prop.z_index = int(req.get("layer", DEFAULT_OBJECT_LAYER))
+	var under = int(req.get("sorting", 0)) == 1
+	if under: level.Objects.move_child(prop, 0)
+	level.Objects.AddToSearchTable(prop, under)
+	prop.position = Vector2(float(req.get("x", 0)), float(req.get("y", 0)))
+	var width = float(req.get("width", 256))
+	var height = float(req.get("height", width * ph / pw))
+	prop.scale = Vector2(width / pw, height / ph)
+	prop.rotation = deg2rad(float(req.get("rotation", 0)))
+	_apply_block_light(prop, bool(req.get("block_light", false)))
+	_prune_import_staging(folder, staged)
+	return _ok({ "id": _id(prop), "position": _vec(prop.position), "layer": prop.z_index,
+		"size": [width, height], "texture_size": [pw, ph], "embedded": true,
+		"asset": prop.Texture.resource_path })
+
+# Staged paths this bridge instance has imported. The bridge is loaded again
+# for every map, so this is "imported into the map that is open now".
+var _imported_here := {}
+
+func _stage_png(path : String, bytes : PoolByteArray) -> String:
+	var f = File.new()
+	if f.open(path, File.WRITE) != OK: return "cannot stage PNG"
+	f.store_buffer(bytes)
+	f.flush()
+	var write_error = f.get_error()
+	f.close()
+	return "" if write_error == OK else "could not finish staging PNG; no object was imported"
+
+# The object EmbedObject added, found by what was not there before.
+func _embed_png(level, object_tool, staged : String):
+	var before = {}
+	for child in level.Objects.get_children():
+		before[child.get_instance_id()] = true
+	object_tool.EmbedObject(staged)
+	for child in level.Objects.get_children():
+		if not before.has(child.get_instance_id()): return child
+	return null
+
+func _prune_import_staging(folder : String, keep : String) -> void:
+	var directory = Directory.new()
+	if directory.open(folder) != OK: return
+	var paths = []
+	var times = []
+	var f = File.new()
+	directory.list_dir_begin(true, true)
+	var name = directory.get_next()
+	while name != "":
+		var full = folder.plus_file(name)
+		if not directory.current_is_dir() and name.get_extension() == "png" and full != keep:
+			paths.append(full)
+			times.append(f.get_modified_time(full))
+		name = directory.get_next()
+	directory.list_dir_end()
+
+	while paths.size() >= IMPORT_STAGING_KEEP:
+		var oldest = 0
+		for i in range(1, times.size()):
+			if times[i] < times[oldest]: oldest = i
+		directory.remove(paths[oldest])
+		paths.remove(oldest)
+		times.remove(oldest)
 
 func _place_object(req : Dictionary) -> Dictionary:
 	var light_spec = req.get("light", null)

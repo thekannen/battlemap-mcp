@@ -236,6 +236,9 @@ def test_verify_live_covers_every_tool_that_can_be_checked_live():
         # Covered with synthetic maps in test_mapfile.
         "inspect_map_file",
         "arrange_objects",
+        # Needs a PNG on disk rather than a stock asset; the UAT image_import
+        # group places, edits, undoes, saves and reopens one.
+        "import_image",
     }
     missing = tools - covered - cannot_check
     assert not missing, (

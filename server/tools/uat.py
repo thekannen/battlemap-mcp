@@ -2554,6 +2554,120 @@ def editor_grid(u: Uat) -> None:
     u.check("editor_grid: the View menu checkbox follows set_grid", checkbox_follows_the_grid)
 
 
+@group("image_import")
+def image_import(u: Uat) -> None:
+    import json
+    import tempfile
+
+    from PIL import Image as PILImage
+
+    folder = pathlib.Path(tempfile.mkdtemp(prefix="uat-image-"))
+    source = folder / "prop.png"
+
+    def write(colour):
+        PILImage.new("RGBA", (64, 32), colour).save(source)
+        return source.as_posix()
+
+    def import_and_undo():
+        before = u.c.request("get_status")["counts"]["objects"]
+        r = u.c.request("import_image", path=write((200, 30, 30, 255)), x=u.cx, y=u.cy, width=512)
+        assert r["embedded"] and r["asset"].startswith("embedded://"), r
+        assert r["size"] == [512, 256] and r["texture_size"] == [64, 32], r
+        got = u.c.request("get_element", id=r["id"])
+        assert got["asset"] == r["asset"], got
+        u.c.request("undo")
+        time.sleep(0.5)
+        after = u.c.request("get_status")["counts"]["objects"]
+        assert after == before, f"{before} objects before, {after} after undoing the import"
+        return "embedded, sized from the PNG, and undone"
+
+    u.check(
+        "image_import: a PNG imports as an object and undoes", import_and_undo, needs_dirty=True
+    )
+
+    def revised_bytes_are_new():
+        a = u.c.request("import_image", path=write((30, 200, 30, 255)), x=u.cx, y=u.cy, width=256)
+        b = u.c.request("import_image", path=write((30, 30, 200, 255)), x=u.cx, y=u.cy, width=256)
+        assert a["asset"] != b["asset"], "a revised PNG came back as the old texture"
+        c = u.c.request("import_image", path=source.as_posix(), x=u.cx, y=u.cy, width=256)
+        assert c["asset"] == b["asset"], "identical bytes should reuse the texture"
+        u.c.request("delete_elements", ids=[a["id"], b["id"], c["id"]])
+        return "changed bytes, new texture; same bytes, same texture"
+
+    u.check(
+        "image_import: revised bytes are not served from the cache",
+        revised_bytes_are_new,
+        needs_dirty=True,
+    )
+
+    def saved_map_holds_the_image():
+        r = u.c.request(
+            "import_image",
+            path=write((200, 200, 30, 255)),
+            x=u.cx,
+            y=u.cy,
+            width=256,
+            layer=200,
+            rotation=30,
+        )
+        name = f"uat-image-{int(time.time())}.dungeondraft_map"
+        saved = u.c.request("save_map", filename=name)
+        u.made_file(saved["path"])
+        assert u.wait_for_save(45.0), "save never finished"
+        data = json.loads(pathlib.Path(saved["path"]).read_text())
+        assert r["asset"][len("embedded://") :] in data["world"]["embedded"], (
+            "image not embedded in the file"
+        )
+        source.unlink()
+        home = u.original_map_file
+        try:
+            u.reopen(saved["path"])
+            got = u.c.request("get_element", id=r["id"])
+            assert got["asset"] == r["asset"] and got["layer"] == 200, got
+            assert abs(got["rotation"] - 30) < 0.01, got
+        finally:
+            if home is not None:
+                u.reopen(str(home))
+        return "the map file carries the PNG and reopens without the source"
+
+    u.check(
+        "image_import: the saved map holds the image", saved_map_holds_the_image, needs_dirty=True
+    )
+
+    def reimport_after_reopen():
+        # An undone import keeps its node, and so its texture, alive across a
+        # map change. Importing the same bytes afterwards used to come back
+        # with an unnamed texture that the map then saved without its image.
+        colour = (90, 60, 160, 255)
+        first = u.c.request("import_image", path=write(colour), x=u.cx, y=u.cy, width=256)
+        u.c.request("undo")
+        name = f"uat-image-reopen-{int(time.time())}.dungeondraft_map"
+        saved = u.c.request("save_map", filename=name)
+        u.made_file(saved["path"])
+        assert u.wait_for_save(45.0), "save never finished"
+        home = u.original_map_file
+        try:
+            u.reopen(saved["path"])
+            again = u.c.request("import_image", path=write(colour), x=u.cx, y=u.cy, width=256)
+            assert again["asset"].startswith("embedded://"), f"texture came back unnamed: {again}"
+            u.c.request("save_map")
+            assert u.wait_for_save(45.0), "save never finished"
+            data = json.loads(pathlib.Path(saved["path"]).read_text())
+            key = again["asset"][len("embedded://") :]
+            assert key in data["world"]["embedded"], "the re-import was saved without its image"
+        finally:
+            if home is not None:
+                u.reopen(str(home))
+        renamed = "renamed" if again["asset"] != first["asset"] else "same name"
+        return f"re-import after a reopen saved its image ({renamed})"
+
+    u.check(
+        "image_import: re-importing after a map reopen keeps the image",
+        reimport_after_reopen,
+        needs_dirty=True,
+    )
+
+
 @group("checkpoint")
 def checkpoint(u: Uat) -> None:
     """Runtime behavior and validation."""

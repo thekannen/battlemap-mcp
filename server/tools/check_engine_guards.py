@@ -96,6 +96,18 @@ def main() -> int:
                     f"_on_panel_pause may, so an assistant cannot unpause itself"
                 )
 
+        # --- 5. never sort() an array that holds arrays
+        # Godot 3.4.2's Array < Array is not a consistent ordering, and sort()
+        # with it read past the array and crashed Dungeondraft (import_image's
+        # staging prune). Strings, ints and floats sort safely.
+        for var in re.findall(r"\b(\w+)\.sort\(\)", body):
+            if re.search(rf"\b{var}\.(append|push_back|push_front|insert)\(\s*(\w+,\s*)?\[", body):
+                problems.append(
+                    f"{MOD.name}: {name} sorts {var}, which holds arrays; Godot "
+                    f"3.4's Array < Array is inconsistent and sort() with it "
+                    f"crashed Dungeondraft. Sort a parallel array of scalars"
+                )
+
     for p in problems:
         print(p)
     if problems:
@@ -108,7 +120,8 @@ def main() -> int:
     print(
         "engine guards: every request colour is validated before use, every "
         "level teardown re-arms the UI's tool, every created node is saveable, "
-        "and only the user's panel changes Pause or the panel settings"
+        "only the user's panel changes Pause or the panel settings, and no "
+        "array of arrays is sorted"
     )
     return 0
 

@@ -59,6 +59,7 @@ SERVER_FILES = (
     "errors.py",
     "floorplan.py",
     "handshake.py",
+    "image_import.py",
     "pack_contents.py",
     "installer.py",
     "layout.py",
