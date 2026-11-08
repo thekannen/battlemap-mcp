@@ -239,6 +239,9 @@ def test_verify_live_covers_every_tool_that_can_be_checked_live():
         # Needs a PNG on disk rather than a stock asset; the UAT image_import
         # group places, edits, undoes, saves and reopens one.
         "import_image",
+        # Needs Moulk's Soft Shadows mod; the UAT soft_shadows group sets,
+        # changes, removes and undoes shadows on objects, walls and paths.
+        "set_soft_shadow",
     }
     missing = tools - covered - cannot_check
     assert not missing, (

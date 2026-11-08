@@ -2668,6 +2668,222 @@ def image_import(u: Uat) -> None:
     )
 
 
+def _soft_shadows_factory(bridge_root: str) -> dict | None:
+    """Soft Shadows' own default object shadow, read from its installed source.
+
+    The UAT seeds a shadow the way a saved map carries one, and the mod indexes
+    its config keys directly, so a hand-written partial config is not enough.
+    """
+    import re
+
+    mods = pathlib.Path(bridge_root).parent
+    for ddmod in mods.glob("*/SoftShadows.ddmod"):
+        source = ddmod.parent / "scripts" / "DropShadowObjects.gd"
+        if not source.is_file():
+            continue
+        text = source.read_text(encoding="utf-8")
+        start = text.find("const FACTORY_DEFAULTS = {")
+        if start < 0:
+            continue
+        out: dict = {}
+        for line in text[start:].splitlines()[1:]:
+            line = line.split("#")[0].strip()
+            if line.startswith("}"):
+                break
+            m = re.match(r'"(\w+)":\s*(.+?),?$', line)
+            if not m:
+                continue
+            key, value = m.group(1), m.group(2).rstrip(",").strip()
+            if value in ("true", "false"):
+                out[key] = value == "true"
+            elif value.startswith('"'):
+                out[key] = value.strip('"')
+            elif value.startswith("Color("):
+                r, g, b, a = (float(x) for x in value[6:-1].split(","))
+                out[key] = "".join(f"{int(c * 255):02x}" for c in (a, r, g, b))
+            else:
+                try:
+                    out[key] = float(value) if "." in value else int(value)
+                except ValueError:
+                    continue
+        return out or None
+    return None
+
+
+@group("soft_shadows")
+def soft_shadows(u: Uat) -> None:
+    import json
+
+    def duplicate_keeps_shadow():
+        info = u.c.request("ping").get("soft_shadows") or {}
+        if not info.get("loaded"):
+            return "skipped: Soft Shadows is not loaded"
+        if not info.get("verified"):
+            return f"skipped: Soft Shadows {info.get('version')} is not a verified version"
+        factory = _soft_shadows_factory(u.c.request("ping").get("bridge_root", ""))
+        if factory is None:
+            return "skipped: Soft Shadows source not found beside the bridge"
+        asset = u.asset("Objects", "barrel") or u.asset("Objects")
+        placed = u.c.request("place_object", asset=asset, x=u.cx, y=u.cy)
+        name = f"uat-softshadow-{int(time.time())}.dungeondraft_map"
+        saved = u.c.request("save_map", filename=name)
+        u.made_file(saved["path"])
+        assert u.wait_for_save(45.0), "save never finished"
+        path = pathlib.Path(saved["path"])
+        data = json.loads(path.read_text())
+        config = dict(factory, enabled=True, opacity=0.9, offset_x=40.0, offset_y=40.0)
+        data["mod"].setdefault("DropShadow", {})[str(placed["id"])] = config
+        path.write_text(json.dumps(data))
+        home = u.original_map_file
+        try:
+            u.reopen(str(path))
+            dup = u.c.request("duplicate_object", id=placed["id"], dx=512, dy=0)
+            assert "soft shadow" in dup["copied"], f"shadow not copied: {dup}"
+            u.c.request("save_map")
+            assert u.wait_for_save(45.0), "save never finished"
+            after = json.loads(path.read_text())["mod"].get("DropShadow", {})
+            entry = after.get(str(dup["id"]))
+            assert entry and entry.get("enabled"), f"the copy saved without a shadow: {entry}"
+        finally:
+            if home is not None:
+                u.reopen(str(home))
+        return f"Soft Shadows {info.get('version')}: the copy kept its shadow"
+
+    def assistant_sets_shadows():
+        info = u.c.request("ping").get("soft_shadows") or {}
+        if not info.get("loaded") or not info.get("verified"):
+            return "skipped: Soft Shadows is not loaded, or not a verified version"
+        obj = u.c.request("place_object", asset=u.asset("Objects"), x=u.cx - 600, y=u.cy)
+        wall = u.c.request("draw_wall", points=[[u.cx - 900, u.cy - 600], [u.cx + 900, u.cy - 600]])
+        path_asset = u.asset("Paths")
+        ids = [obj["id"], wall["id"]]
+        if path_asset:
+            path = u.c.request(
+                "draw_path",
+                asset=path_asset,
+                points=[[u.cx - 900, u.cy + 600], [u.cx + 900, u.cy + 600]],
+            )
+            ids.append(path["id"])
+        depth = u.c.request("get_status")["undo_depth"]
+        u.c.request("set_soft_shadow", ids=ids, enabled=True, opacity=0.7, offset=[30, 30])
+        for ident in ids:
+            shadow = u.c.request("get_element", id=ident).get("soft_shadow") or {}
+            assert shadow.get("enabled") and shadow.get("opacity") == 0.7, (ident, shadow)
+        assert u.c.request("get_status")["undo_depth"] == depth + 1, "not one undo step"
+        u.c.request("set_soft_shadow", ids=[obj["id"]], settings={"blur": 0.5})
+        assert u.c.request("get_element", id=obj["id"])["soft_shadow"]["blur"] == 0.5
+        try:
+            u.c.request("set_soft_shadow", ids=[obj["id"], 999999], opacity=0.2)
+            raise AssertionError("a bad id was accepted")
+        except BridgeCommandError:
+            pass
+        assert u.c.request("get_element", id=obj["id"])["soft_shadow"]["opacity"] == 0.7, (
+            "partly applied"
+        )
+        u.c.request("undo")
+        u.c.request("undo")
+        for ident in ids:
+            assert "soft_shadow" not in u.c.request("get_element", id=ident), (
+                f"{ident} kept a shadow"
+            )
+        u.c.request("delete_elements", ids=ids)
+        return f"set, changed and undone on {len(ids)} kinds in one step each"
+
+    u.check(
+        "soft_shadows: the assistant sets, changes and undoes shadows",
+        assistant_sets_shadows,
+        needs_dirty=True,
+    )
+
+    u.check(
+        "soft_shadows: a duplicate keeps the source's shadow",
+        duplicate_keeps_shadow,
+        needs_dirty=True,
+    )
+
+
+@group("sketch_tool")
+def sketch_tool(u: Uat) -> None:
+    import base64
+    import io
+    import json
+
+    from PIL import Image as PILImage
+    from PIL import ImageDraw
+
+    def magenta(path: str) -> int:
+        with PILImage.open(path) as image:
+            pixels = image.convert("RGB").getdata()
+            return sum(1 for r, g, b in pixels if r > 200 and g < 90 and b > 200)
+
+    def settle(op: dict) -> dict:
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            try:
+                status = u.c.request("get_operation", operation_id=op["operation_id"])
+            except BridgeUnavailableError:
+                time.sleep(0.25)
+                continue
+            if status["state"] != "rendering":
+                return status
+            time.sleep(0.25)
+        raise AssertionError(f"{op['operation_id']} never settled")
+
+    def export_hides_sketches():
+        name = f"uat-sketch-{int(time.time())}.dungeondraft_map"
+        saved = u.c.request("save_map", filename=name)
+        u.made_file(saved["path"])
+        assert u.wait_for_save(45.0), "save never finished"
+        path = pathlib.Path(saved["path"])
+        data = json.loads(path.read_text())
+        art = PILImage.new("RGBA", (1024, 1024), (0, 0, 0, 0))
+        pen = ImageDraw.Draw(art)
+        pen.line([(0, 0), (1023, 1023)], fill=(255, 0, 255, 255), width=60)
+        pen.line([(1023, 0), (0, 1023)], fill=(255, 0, 255, 255), width=60)
+        buf = io.BytesIO()
+        art.save(buf, "PNG")
+        data.setdefault("mod", {})["Moulk.SketchLayer"] = {
+            "version": 1,
+            "active": 0,
+            "next_uid": 2,
+            "layer_z": 800,
+            "overlay_alpha": 1.0,
+            "visible": True,
+            "sketches": [
+                {
+                    "uid": 1,
+                    "name": "UAT",
+                    "png": base64.b64encode(buf.getvalue()).decode(),
+                    "rect": [u.cx - 512, u.cy - 512, 1024, 1024],
+                }
+            ],
+        }
+        path.write_text(json.dumps(data))
+        home = u.original_map_file
+        try:
+            u.reopen(str(path))
+            u.c.request("set_camera", x=u.cx, y=u.cy)
+            if magenta(u.c.request("screenshot")["path"]) == 0:
+                return "skipped: Sketch Tool is not loaded (the seeded sketch did not draw)"
+            op = u.c.request("export_map", name=f"uat-sketch-{time.time_ns()}.png", ppi=20)
+            status = settle(op)
+            assert status["state"] == "completed", status
+            leaked = magenta(status["path"])
+            assert leaked == 0, f"{leaked} sketch pixels in the export"
+            back = magenta(u.c.request("screenshot")["path"])
+            assert back > 0, "the sketch did not come back after the export"
+        finally:
+            if home is not None:
+                u.reopen(str(home))
+        return f"export had 0 sketch pixels; {back} back on screen afterwards"
+
+    u.check(
+        "sketch_tool: exports leave the user's sketches out",
+        export_hides_sketches,
+        needs_dirty=True,
+    )
+
+
 @group("checkpoint")
 def checkpoint(u: Uat) -> None:
     """Runtime behavior and validation."""
@@ -2836,6 +3052,39 @@ def checkpoint(u: Uat) -> None:
 
 @group("history")
 def history(u: Uat) -> None:
+    def redo_survives_looking_and_saving():
+        # Camera moves and saves change nothing undo could restore. They used
+        # to discard the redo branch, so "undo, screenshot(center=...), redo"
+        # failed, and a checkpoint listed them as edits outside history.
+        asset = u.asset("Objects")
+        placed = u.c.request("place_object", asset=asset, x=u.cx + 700, y=u.cy + 700)
+        u.c.request("checkpoint", label="uat-view")
+        u.c.request("set_camera", x=u.cx, y=u.cy)
+        u.c.request("fit_elements")
+        u.c.request("focus_element", id=placed["id"])
+        u.c.request("undo")
+        u.c.request("set_camera", x=u.cx + 256, y=u.cy)
+        u.c.request("save_map")
+        assert u.wait_for_save(45.0), "save never finished"
+        status = u.c.request("get_status")
+        assert status["redo_depth"] >= 1, f"redo was discarded: {status['redo_depth']}"
+        u.c.request("redo")
+        time.sleep(0.5)
+        got = u.c.request("get_element", id=placed["id"])
+        assert got.get("id") == placed["id"], got
+        listed = u.c.request("list_checkpoints")
+        for cp in listed.get("checkpoints", []):
+            if cp.get("label") == "uat-view":
+                assert not cp.get("not_reversible"), f"view changes counted as edits: {cp}"
+        u.c.request("delete_element", id=placed["id"])
+        return "redo kept through camera moves and a save"
+
+    u.check(
+        "history: redo survives camera moves and a save",
+        redo_survives_looking_and_saving,
+        needs_dirty=True,
+    )
+
     def undo_stack_is_capped():
         status = u.c.request("get_status")
         cap = status["max_undo"]
@@ -2946,6 +3195,53 @@ def history(u: Uat) -> None:
         return f"redo branch for {first['id']} dropped by a new edit"
 
     u.check("a new edit discards the redo branch", an_edit_discards_redo, needs_dirty=True)
+
+    def a_map_change_frees_history_nodes():
+        """Deleted and undone elements wait OUT of the tree for undo/redo.
+
+        Nodes are not refcounted, so when a map change dropped the history they
+        stayed orphans for the life of the process: 50 deletes left 50 orphan
+        nodes in the next map, where Dungeondraft's own Delete leaves none.
+        """
+        start = u.c.request("get_status")
+        assert "engine_objects" in start, "this bridge does not report engine_objects"
+        home = u.original_map_file
+        saved = u.c.request(
+            "save_map", filename=f"uat-history-free-{int(time.time())}.dungeondraft_map"
+        )
+        u.made_file(saved["path"])
+        assert u.wait_for_save(timeout=45.0), "the scratch save never finished"
+        baseline = u.c.request("get_status")["engine_objects"]["orphan_nodes"]
+        asset = u.asset("Objects")
+        rows = [{"asset": asset, "x": u.cx - 1024 + i * 192, "y": u.cy - 3328} for i in range(10)]
+        deleted = [entry["id"] for entry in u.c.request("place_objects", objects=rows)["objects"]]
+        u.c.request("delete_elements", ids=deleted)
+        rows = [{"asset": asset, "x": u.cx - 1024 + i * 192, "y": u.cy - 3584} for i in range(5)]
+        u.c.request("place_objects", objects=rows)
+        u.c.request("undo")
+        held = u.c.request("get_status")["engine_objects"]["orphan_nodes"] - baseline
+        # Without detached nodes in history this case proves nothing.
+        assert held >= 15, f"15 elements went to history, orphans rose by {held}"
+        try:
+            u.reopen(saved["path"])
+            after = u.c.request("get_status")["engine_objects"]["orphan_nodes"]
+            # Tolerance for an engine node in transit; the leak was all 15.
+            assert after <= baseline + 2, (
+                f"orphans {baseline} -> {baseline + held} with history -> {after} "
+                f"after the map change: history's nodes outlived their map"
+            )
+        finally:
+            if home is not None:
+                u.reopen(str(home))
+        return (
+            f"history held {held} orphan nodes; after the map change {after} (baseline {baseline})"
+        )
+
+    u.check(
+        "a map change frees elements held only by history",
+        a_map_change_frees_history_nodes,
+        needs_dirty=True,
+    )
 
 
 @group("dd2vtt")

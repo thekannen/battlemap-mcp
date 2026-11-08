@@ -4809,6 +4809,52 @@ def modify_object(
 
 
 @tool()
+def set_soft_shadow(
+    ids: list[int],
+    enabled: bool = True,
+    opacity: Annotated[float | None, Field(ge=0, le=2)] = None,
+    offset: Annotated[list[float] | None, Field(min_length=2, max_length=2)] = None,
+    color: str | None = None,
+    settings: dict[str, Any] | None = None,
+) -> dict:
+    """Add, change or remove Moulk's Soft Shadows on objects, walls and paths.
+
+    Needs the Soft Shadows mod (ping reports soft_shadows); refused without
+    it. One undo step for all ids; all are checked before any changes.
+    enabled: false removes the shadow. An element without one starts from
+    the mod's current defaults for its kind; one with a shadow keeps its other
+    settings.
+    opacity: 0-2 (above 1 darkens the blurred edge). offset: [x, y] in woxels,
+    where the shadow falls. color: '#rrggbb'.
+    settings: any other key of that element's shadow, such as blur for
+    objects, or softness and spread for walls and paths. get_element(id)
+    lists an element's soft_shadow keys once it has one; an unknown key is
+    refused. Prefer a modest offset (20-60) and opacity (0.4-0.8).
+    """
+    if not ids or len(ids) > BATCH_LIMIT:
+        raise ValidationError(f"ids must list 1 to {BATCH_LIMIT} elements")
+    for ident in ids:
+        if isinstance(ident, bool) or not isinstance(ident, int) or ident < 0:
+            raise ValidationError(f"element ids must be nonnegative integers, got {ident!r}")
+    if color is not None and not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        raise ValidationError("color must be '#rrggbb'")
+    if offset is not None:
+        require_finite(offset[0], "offset[0]")
+        require_finite(offset[1], "offset[1]")
+    params: dict[str, Any] = {"ids": ids, "enabled": enabled}
+    if opacity is not None:
+        require_finite(opacity, "opacity")
+        params["opacity"] = opacity
+    if offset is not None:
+        params["offset"] = list(offset)
+    if color is not None:
+        params["color"] = color
+    if settings:
+        params["settings"] = settings
+    return bridge.request("set_soft_shadow", **params)
+
+
+@tool()
 def duplicate_object(id: int, dx: float = 64.0, dy: float = 0.0, snap: str = "") -> dict:
     """Duplicate an object by id, offset by (dx, dy) woxels. Returns the new element id.
 

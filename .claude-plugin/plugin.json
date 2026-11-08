@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "battlemap-mcp",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Build battle maps in a running Dungeondraft: the map tools plus art-direction skills. Needs the bridge mod in Dungeondraft, which your assistant can install.",
   "author": {
     "name": "thekannen",
@@ -11,5 +11,5 @@
   "skills": [
     "./skills"
   ],
-  "mcpServers": "https://github.com/thekannen/battlemap-mcp/releases/download/v1.4.1/battlemap-mcp-1.4.1.mcpb"
+  "mcpServers": "https://github.com/thekannen/battlemap-mcp/releases/download/v1.4.2/battlemap-mcp-1.4.2.mcpb"
 }

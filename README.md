@@ -12,6 +12,19 @@ An AI collaborator for your Dungeondraft maps: a local bridge that lets your AI 
 
 This is a local automation layer for your own Dungeondraft map-making session. It does **not** generate original assets or art for you; it drives what you already own in Dungeondraft. Please buy and support Dungeondraft, and support the artists whose asset packs you use.
 
+## Supported mods
+
+battlemap-mcp notices these Dungeondraft mods when they are loaded and works with them. Without them, nothing changes.
+
+| Mod | What your assistant does with it |
+|---|---|
+| [Unofficial Patch](https://github.com/Moulkator/UnofficialPatch) by Moulk | Resizes maps up to 200 tiles a side and uses the Above Lights layer. Keeps your Free Transform shapes and groups when it moves or copies objects, and leaves the patch's extra terrain slots alone. |
+| [Custom Snap Mod](https://github.com/Lievven/Snappy-Mod) by Lievven | Reads your square, hex or custom grid and, when you ask, places things on it, as your cursor would. It never changes your snap settings. |
+| [Soft Shadows](https://github.com/Moulkator/SoftShadows) by Moulk | Adds, adjusts and removes soft shadows on objects, walls and paths, and keeps your own shadows when it moves, edits, deletes, undoes or copies them. Roof and pattern shadows are left as you set them. |
+| [Sketch Tool](https://github.com/Moulkator/SketchTool) by Moulk | Keeps your sketch notes out of the map images it exports, as Dungeondraft's own Export does. |
+
+Some steps depend on a mod's version, and run only on the versions they were checked against. Details: [Using other mods](https://knownframe.com/battlemap-mcp/docs/other-mods/).
+
 ## What you can make
 
 Build a whole map from a brief, plan an encounter together, furnish one room, export to or rebuild from a Universal VTT file, or hand off tedious placement. See [example prompts](https://knownframe.com/battlemap-mcp/docs/example-prompts/).

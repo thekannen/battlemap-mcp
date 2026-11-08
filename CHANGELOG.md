@@ -4,6 +4,41 @@ What changed in each release, written for the people using it. Versions cover
 the companion, the Dungeondraft mod and the map-making skills together; the
 wire protocol between them is versioned separately and is currently 25.
 
+## 1.4.2 — 2026-11-08
+
+No more console windows flashing on Windows, your own images on the map,
+and support for Moulk's Soft Shadows and Sketch Tool. The first two are
+@arhidavid's work, from two pull requests: thank you, David.
+
+**No more console windows flashing on Windows.** Every time a map opened,
+Windows briefly showed a console window and could pull focus away from
+Dungeondraft. That now happens only once, when Dungeondraft starts; later
+map opens in the same session show nothing.
+
+**Put your own images on the map.** Your assistant can place a PNG from
+your computer, such as a hand-drawn token, a sign or a handout, as an
+object you can move, turn and resize like any other. The image is stored
+inside the map file, so it is still there if you move or delete the
+original.
+
+**Soft shadows your assistant can set.** With Moulk's Soft Shadows mod
+installed, your assistant can add, adjust or remove soft shadows on
+objects, walls and paths, and undo the change. Objects it copies keep
+their shadows, where before the copies came out without them.
+
+**Sketch notes stay out of exports.** With Moulk's Sketch Tool installed,
+the notes you sketch over a map used to appear in images your assistant
+exported. They are now hidden for the export and back on screen
+afterwards, as with Dungeondraft's own Export window.
+
+**Redo survives looking and saving.** Undoing a step, then taking a
+screenshot or saving, used to throw away the step you could have redone.
+Moving the view and saving now leave redo alone.
+
+**Long sessions use less memory.** Elements kept for undo were left in
+memory each time a different map was opened. They are now freed with the
+map they belonged to.
+
 ## 1.4.1 — 2026-10-30
 
 Rooms built side by side share one wall, so their doors open in your VTT,
