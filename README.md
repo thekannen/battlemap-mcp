@@ -2,7 +2,7 @@
 
 An AI collaborator for your Dungeondraft maps: a local bridge that lets your AI assistant (Claude Desktop, Claude Code, Codex, OpenCode, or any other MCP client) build, inspect, and refine the map you have open, using assets you already own.
 
-**Documentation: [knownframe.com/battlemap-mcp/docs](https://knownframe.com/battlemap-mcp/docs/)**
+**Documentation: [knownframe.com/battlemap-mcp/docs](https://knownframe.com/battlemap-mcp/docs/)** · **Setup video: [install it in five minutes](https://youtu.be/z4hD-ntjhGE)** (YouTube)
 
 <img src="docs/media/tavern-build.gif" alt="An AI agent building a tavern interior in Dungeondraft, sped up" width="100%">
 
@@ -31,7 +31,7 @@ Build a whole map from a brief, plan an encounter together, furnish one room, ex
 
 ## Get started
 
-You need **Dungeondraft 1.2.0.1** and an AI app that can run local MCP servers, on the same computer. Follow **[Get started](https://knownframe.com/battlemap-mcp/docs/get-started/)**, then the [Windows](https://knownframe.com/battlemap-mcp/docs/windows/), [macOS](https://knownframe.com/battlemap-mcp/docs/macos/) or [Linux](https://knownframe.com/battlemap-mcp/docs/linux/) guide. Downloads are on the [Releases](https://github.com/thekannen/battlemap-mcp/releases) page.
+You need **Dungeondraft 1.2.0.1** and an AI app that can run local MCP servers, on the same computer. Follow **[Get started](https://knownframe.com/battlemap-mcp/docs/get-started/)**, then the [Windows](https://knownframe.com/battlemap-mcp/docs/windows/), [macOS](https://knownframe.com/battlemap-mcp/docs/macos/) or [Linux](https://knownframe.com/battlemap-mcp/docs/linux/) guide. Downloads are on the [Releases](https://github.com/thekannen/battlemap-mcp/releases) page. Prefer to watch? The [setup video](https://youtu.be/z4hD-ntjhGE) installs everything with the Claude desktop app, start to finish.
 
 <a id="5-include-your-asset-packs"></a>
 
