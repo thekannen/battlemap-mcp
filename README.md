@@ -6,7 +6,7 @@ An AI collaborator for your Dungeondraft maps: a local bridge that lets your AI 
 
 <img src="docs/media/tavern-build.gif" alt="An AI agent building a tavern interior in Dungeondraft, sped up" width="100%">
 
-<sub>Sped up 11×; the full build took about five minutes.</sub>
+<sub>Sped up 11×; the full build took about five minutes. [Watch the narrated build](https://youtu.be/Okt4S9iLsyM) (YouTube).</sub>
 
 ## Support creators first
 
