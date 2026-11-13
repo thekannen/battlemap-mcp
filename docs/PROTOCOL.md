@@ -51,6 +51,7 @@ The following is the public MCP tool surface; the companion may perform several 
 | `list_asset_categories` | — |
 | `list_asset_packs` | — |
 | `prepare_map_with_packs` | `filename`, `packs` |
+| `create_image_pack` | `filename`, `name`, `images`, `pack_id`, `author` |
 | `list_assets` | `category`, `search`, `limit`, `vanilla_only`, `match_mode`, `min_score`, `searches` |
 | `preview_assets` | `assets`, `category`, `columns`, `cell_px` |
 | `repair_terrain` | `force` |
