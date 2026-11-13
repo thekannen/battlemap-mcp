@@ -2108,6 +2108,7 @@ def import_image(
     checkpoints. The image does not join the asset library, so list_assets
     will not find it. Reimporting changed bytes makes a new texture.
     PNG only: at most 32 MiB, 8192 px per side and 16 million pixels.
+    For a reusable tagged library entry, use create_image_pack instead.
     """
     source = Path(path).expanduser()
     if not source.is_absolute() or not source.is_file():
@@ -2140,6 +2141,46 @@ def import_image(
     if height is not None:
         params["height"] = height
     return _with_snap(bridge.request("import_image", **params), snap_info)
+
+
+class PackImage(BaseModel):
+    """A PNG and its searchable library name and tags."""
+
+    model_config = ConfigDict(extra="forbid")
+    path: str
+    name: str
+    tags: list[str]
+
+
+@tool()
+def create_image_pack(
+    filename: str,
+    name: str,
+    images: list[PackImage],
+    pack_id: str = "",
+    author: str = "",
+) -> dict:
+    """Build a native, reusable .dungeondraft_pack of named, tagged PNG objects.
+
+    Writes only into Dungeondraft's configured asset folder (Settings > Assets),
+    never to an arbitrary path. filename: bare NEW .dungeondraft_pack name in
+    that folder; existing files are never overwritten. name: pack title related
+    to the map/project. Each image needs an absolute PNG path, a library name,
+    and descriptive tags (e.g. furniture, workshop, oak). PNG alpha is kept.
+    pack_id: optional eight alphanumeric characters; generated if omitted.
+
+    This creates a complete pack; it does not edit third-party archives. To
+    extend a collection, rebuild from the full image list under a new filename.
+    Prefer a new id during a live session; Dungeondraft caches loaded pack ids.
+
+    After writing, rescan packs in the Assets window (or restart Dungeondraft),
+    then prepare_map_with_packs with the returned id. This tool does not refresh
+    the editor or change the open map's included packs. search_pack_contents can
+    already list the new archive from disk. Embedded import_image objects stay
+    map-local; these pack assets become searchable library entries once included.
+    """
+    entries = [PackImage.model_validate(item).model_dump() for item in images]
+    return image_import.build_pack(filename, name, entries, pack_id, author)
 
 
 @tool()
