@@ -118,6 +118,7 @@ def test_server_instructions_cover_the_traps():
         "never answer from memory",
         "y grows DOWN",  # C6: Codex called y=390 the lower-left corner
         "saved file path",  # S3: the image reached the model, never the user
+        "get_skill",
     ):
         assert rule in INSTRUCTIONS, f"guidance lost its {rule!r} rule"
 
@@ -239,12 +240,21 @@ def test_verify_live_covers_every_tool_that_can_be_checked_live():
         # Needs a PNG on disk rather than a stock asset; the UAT image_import
         # group places, edits, undoes, saves and reopens one.
         "import_image",
+        # Reads the bundled skills and sends no bridge command; covered in
+        # tests/test_get_skill.py.
+        "get_skill",
+        # Reads a .dd2vtt and an export file; its one bridge read is
+        # get_status, exercised here. Covered in tests/test_sample_colors.py.
+        "sample_colors",
         # Writes a pack under the configured asset folder; covered in
         # tests/test_image_import.py. Does not send a bridge command.
         "create_image_pack",
         # Needs Moulk's Soft Shadows mod; the UAT soft_shadows group sets,
         # changes, removes and undoes shadows on objects, walls and paths.
         "set_soft_shadow",
+        # Needs CePeU's Animated Doors mod; the UAT animated_doors group
+        # declares, changes, undoes and duplicates doors.
+        "set_animated_door",
     }
     missing = tools - covered - cannot_check
     assert not missing, (

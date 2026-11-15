@@ -50,6 +50,18 @@ IGNORE_LOG = (
     # a populated Levels list — so they never produce the get_Level frame.
     ("Prop._ExitTree", "World.get_Level"),
     "Name: 'Action'",
+    # CePeU's Animated Doors 1.0.1 connects Editor.OnSaveBegin to handlers
+    # that take no arguments (controller.gd `_stop_artwork`, standalone_api.gd
+    # `flush`), and Dungeondraft emits that signal with two, so every save logs
+    # both errors, the editor's own included. Never in a run without the mod;
+    # the bridge has no handler by either name (macOS, 2026-11-14).
+    "'Reference::_stop_artwork': Method expected 0 arguments",
+    "'Reference::flush': Method expected 0 arguments",
+    # The Unofficial Patch 1.7.4 connects HSlider drag_started/drag_ended on
+    # every map load; Godot 3.4's HSlider has neither signal. Logged 54 times
+    # with the patch alone, and only fails a case when a reload lands in one.
+    "Attempt to connect nonexistent signal 'drag_started'",
+    "Attempt to connect nonexistent signal 'drag_ended'",
 )
 
 
@@ -263,15 +275,26 @@ class Uat:
     # get_status came back had those lines charged to the NEXT case. Wait as
     # long as the save round-trip case always has, inside the case that opened.
     def reopen(self, path: str, settle: float = 16.0) -> None:
+        # The outgoing bridge answers during a load, with an empty history, so
+        # undo_depth 0 alone let a case start on the map being replaced: with
+        # Animated Doors the reload landed after the next case drew on the old
+        # map, and its ids vanished (macOS, 2026-11-14). Wait for the new
+        # bridge instance, as the server's open_map does.
+        try:
+            before = self.c.request("get_status").get("bridge_instance")
+        except Exception:
+            before = None
         self.c.request("open_map", path=path)
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             time.sleep(0.5)
             try:
-                if self.c.request("get_status").get("undo_depth") == 0:
-                    break
+                status = self.c.request("get_status")
             except Exception:
                 continue
+            fresh = before is None or status.get("bridge_instance") != before
+            if fresh and status.get("undo_depth") == 0:
+                break
         time.sleep(settle)
 
     def made_file(self, path: str) -> str:

@@ -13,6 +13,7 @@ import pytest
 from PIL import Image
 
 from battlemap_mcp import server, uvtt
+from battlemap_mcp.errors import ValidationError
 
 
 def _png(width: int, height: int) -> str:
@@ -454,3 +455,17 @@ def test_light_blockers_get_outlines_from_what_the_bridge_reports():
         image_png=base64.b64decode(_png(40, 40)),
     )
     assert len(document["objects_line_of_sight"]) == 1
+
+
+def test_wall_color_tints_every_imported_wall(tmp_path, fake_map):
+    """Runtime behavior and validation."""
+    preview = server.import_dd2vtt(str(_export(tmp_path)), wall_color="#d8c49a")
+    assert preview["wall_color"] == "#d8c49a"
+    server.import_dd2vtt(str(_export(tmp_path)), confirm=True, trace=False, wall_color="#d8c49a")
+    assert [w["color"] for w in fake_map.sent("draw_wall")] == ["#d8c49a"]
+
+
+def test_a_bad_wall_color_is_refused_before_anything_is_read(tmp_path, fake_map):
+    with pytest.raises(ValidationError):
+        server.import_dd2vtt(str(_export(tmp_path)), wall_color="sandstone")
+    assert fake_map.calls == []

@@ -91,6 +91,35 @@ The builder replaces the archives' symlinks with real files, because a client's 
 2. Scan every download with VirusTotal, including the `.mcpb`, and the Windows launcher and `battlemap-mcp.pkg` inside the Windows ZIP. Fix a detection at its source before publishing.
 3. Install the exact draft downloads on each platform, connect a client, and run a live map check, including save and reopen. Install the downloaded `.mcpb` in Claude Desktop and connect it from a cold start.
 4. Publish the draft. Then install the plugin in Claude Code from the release branch and connect it from a cold start: its bundle URL works only now. Only then fast-forward `main` to the tagged commit, which is what plugin users receive.
+5. Update the MCP registry listing (below). It points at this release's `.mcpb`, so it can only follow publication.
+
+## The MCP registry listing
+
+battlemap-mcp is listed on the [official MCP registry](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.thekannen) as `io.github.thekannen/battlemap-mcp`, a `mcpb` package. Directories that mirror the registry pick it up from there. The registry keeps every version but does not follow releases, so each published release needs a new entry with that release's bundle URL and SHA-256, taken from the published `SHA256SUMS`. The registry caps `description` at 100 characters.
+
+Install the publisher once (`brew install mcp-publisher`), then after publishing:
+
+```text
+V=1.0.0
+SHA=$(gh release download v$V --pattern SHA256SUMS --output - | awk '/\.mcpb$/ {print $1}')
+jq -n --arg v "$V" --arg sha "$SHA" '{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  name: "io.github.thekannen/battlemap-mcp",
+  title: "battlemap-mcp",
+  description: "Let an AI assistant build Dungeondraft battle maps from the assets you already own.",
+  version: $v,
+  websiteUrl: "https://knownframe.com/battlemap-mcp/",
+  repository: {url: "https://github.com/thekannen/battlemap-mcp", source: "github"},
+  packages: [{registryType: "mcpb",
+    identifier: "https://github.com/thekannen/battlemap-mcp/releases/download/v\($v)/battlemap-mcp-\($v).mcpb",
+    fileSha256: $sha, transport: {type: "stdio"}}]}' > dist/server.json
+mcp-publisher validate dist/server.json
+mcp-publisher login github   # device code; authorize as the repository owner
+mcp-publisher publish dist/server.json
+curl -s https://registry.modelcontextprotocol.io/v0/servers/io.github.thekannen%2Fbattlemap-mcp/versions/latest
+```
+
+The last line should report the new version. Run this from the production checkout, so `gh` resolves the release from it.
 
 ## Release order at a glance
 
@@ -98,3 +127,4 @@ The builder replaces the archives' symlinks with real files, because a client's 
 2. Commit the version and dated CHANGELOG on a release branch, and push a `v` tag there; the workflow builds the draft.
 3. Add the macOS companions and the Claude bundle, and regenerate `SHA256SUMS`.
 4. Run the checks above, publish, and fast-forward `main`.
+5. Publish the new version to the MCP registry.

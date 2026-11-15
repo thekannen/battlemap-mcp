@@ -25,6 +25,7 @@ DELIBERATE = {
     "_prop_detach_error": "read-only GetSelectableType, same classification as _describe",
     "_movable_group": "read-only GetSelectableType, same classification as _describe",
     "_set_soft_shadow": "read-only GetSelectableType, same classification as _describe",
+    "_set_animated_door": "read-only GetSelectableType, to name a refused element's kind",
     "_cave_mesh": "helper; enables for its caller, which disables",
     "_set_wizard_design": (
         "presses the wizard's radio and calls OnDesignChange, which sets a "

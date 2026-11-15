@@ -1,8 +1,10 @@
 """Snap points to the grid the user snaps to: the Custom Snap Mod's, or vanilla.
 
-Lievven's Custom Snap Mod (MIT, v1.1.2) is the most widely used Dungeondraft
-mod. It snaps the MOUSE CURSOR each frame, so a bridge that places by explicit
-coordinates never passes through it: an object the model puts at (1000, 1000)
+Lievven's Custom Snap Mod (v1.1.2) is the most widely used Dungeondraft mod.
+Copyright (c) 2024 Lievven, MIT License; the full notice, which must travel
+with this port, is in NOTICE.md at the repository root. The mod snaps the
+MOUSE CURSOR each frame, so a bridge that places by explicit coordinates never
+passes through it: an object the model puts at (1000, 1000)
 lands there even on a hex map. This module applies the same snapping to the
 model's coordinates instead.
 

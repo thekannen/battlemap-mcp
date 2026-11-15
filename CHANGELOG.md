@@ -4,6 +4,79 @@ What changed in each release, written for the people using it. Versions cover
 the companion, the Dungeondraft mod and the map-making skills together; the
 wire protocol between them is versioned separately and is currently 25.
 
+## 1.4.3 — 2026-11-15
+
+Faithful rebuilds from Universal VTT files, the map-making procedures in the
+Claude desktop app, animated doors, and asset packs built from your own
+images. The asset-pack builder is @arhidavid's work: thank you, David.
+
+**Rebuilding from a Universal VTT file aims for a faithful copy.** Asked
+to rebuild a map from its `.dd2vtt`, your assistant now works to a copy that
+holds up side by side with the original at full size, not one that only
+looks close when shrunk. It:
+- measures from full-size views, using the grid;
+- picks each object by looking at it, not by its name;
+- sizes it from its drawn size;
+- compares colours patch by patch;
+- checks the imported walls, doors and ground blending before adding any art;
+- keeps comparing until every part matches.
+
+Anything it could not match is listed with the reason, never quietly
+swapped for something close. The import also takes a wall colour now, so
+light walls such as sandstone no longer come out dark grey.
+
+**Colours matched by number, not by eye.** A new `sample_colors` tool reads
+the colour at chosen points of the original's image and of an export of
+your map, and gives the difference, so tints can be matched exactly. This
+works in the Claude desktop app too, where your assistant cannot read
+pixels itself.
+
+**A warning when Claude has this installed twice.** If more than one of the
+desktop extension, the Claude Code plugin, a Claude Code connection or the
+desktop config file is set up, your assistant now tells you which, with
+their versions. Two that load in the same app show every tool twice, and
+they can quietly be different versions.
+
+**The Claude desktop app gets the map-making procedures too.** The desktop
+extension used to carry only the tools, so in the Claude desktop app your
+assistant built without the step-by-step procedures (interiors, outdoor
+scenes, lighting, reviews, rebuilding from a Universal VTT file) that the
+Claude Code plugin and the Connect files install as skills. The assistant
+can now read those same procedures through the new `get_skill` tool, and it
+is told to read the one that fits before building. The text is identical
+on every route.
+
+**Animated doors your assistant can set.** With CePeU's Animated Doors mod
+installed, your assistant can mark objects and free-standing doors as
+animated doors, choose how they move (hinge, swing, slide and the rest),
+and undo the change. Objects it copies keep their door settings. Doors
+mounted on walls cannot animate, by the mod's design, since an opening
+door would show the wall under it; your assistant places a free-standing
+door in a gap instead. Animated Doors' own Export window still writes the
+animated Universal VTT file.
+
+**Build your own asset pack from images.** Your assistant can turn PNGs on
+your computer into a real Dungeondraft asset pack, each image with its own
+name and tags, written into your asset pack folder. Restart Dungeondraft and
+include the pack in a map, and the images are searchable and placeable like
+any other library asset. It never overwrites a file, writes only into your
+asset folder, and refuses a pack id another pack already uses. This is
+@arhidavid's work again.
+
+**The zoom menu tells the truth after your assistant zooms.** When your
+assistant zoomed or framed part of the map, Dungeondraft's zoom menu could
+name the wrong level: it might say 150% on a much closer view, and choosing
+125% then jumped far out. Your assistant now zooms to Dungeondraft's own
+levels, chosen from that menu as you would, so the menu names the real
+zoom and your next pick starts from it. Framing a single small object also
+no longer zooms in past Dungeondraft's 800% limit. On a map that has just
+opened, Dungeondraft shows 80% while its menu says 100%; your assistant now
+reports the real 80% and says what the menu shows.
+
+**Credit for the Custom Snap Mod.** Your assistant's grid snapping is a port
+of Lievven's Custom Snap Mod. Its MIT license notice now ships in NOTICE.md
+with the source and with every release package, as that license requires.
+
 ## 1.4.2 — 2026-11-08
 
 No more console windows flashing on Windows, your own images on the map,

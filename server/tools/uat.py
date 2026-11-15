@@ -617,12 +617,62 @@ def capture(u: Uat) -> None:
     u.check("fit_elements returns one shape either way", shapes_match)
 
     def camera():
-        u.c.request("set_camera", x=u.cx, y=u.cy, zoom=5.0)
+        r = u.c.request("set_camera", x=u.cx, y=u.cy, zoom=5.0)
         g = u.c.request("get_camera")
-        assert g["position"] == [u.cx, u.cy] and abs(g["zoom"] - 5.0) < 0.01, g
+        assert g["position"] == [u.cx, u.cy] and abs(g["zoom"] - r["zoom"]) < 0.01, (r, g)
         return f"pos {g['position']}, zoom {g['zoom']}"
 
     u.check("set_camera and get_camera agree", camera)
+
+    # The bottom bar's zoom dropdown has fixed entries, and raw camera zoom is
+    # 4 / level (100% = 4, 125% = 3.2). A bridge zoom between entries used to
+    # leave the dropdown naming another one, so the user saw 150% on a closer
+    # view and picking 125% jumped far out (measured 2026-11-14, Windows).
+    def label_matches(state) -> str:
+        label = state.get("zoom_label", "")
+        assert label.endswith("%"), f"no dropdown label: {state}"
+        shown = float(label[:-1])
+        actual = 400.0 / state["zoom"]
+        assert abs(shown - actual) <= 1.0, f"dropdown says {label}, camera is {actual:.1f}%"
+        return label
+
+    def zoom_label_tracks_camera():
+        seen = []
+        for z in (5.0, 1.7, 0.3, 30.0):
+            seen.append(f"{z}->{label_matches(u.c.request('set_camera', zoom=z))}")
+        whole = u.c.request("fit_elements")["camera"]
+        seen.append(f"whole map->{label_matches(whole)}")
+        return ", ".join(seen)
+
+    u.check("the zoom dropdown names the real zoom", zoom_label_tracks_camera)
+
+    # Dungeondraft opens a map at raw 5 (80%) with its menu on 100%, and
+    # get_camera used to repeat the menu: "100%" for an 80% view (measured
+    # 2026-11-14, macOS). Reopening discards this map's unsaved edits.
+    def label_after_open():
+        home = u.original_map_file
+        assert home is not None, "no map file to reopen"
+        u.reopen(str(home))
+        opened = u.c.request("get_camera")
+        label = label_matches(opened)
+        menu = f", menu shows {opened['zoom_menu']}" if "zoom_menu" in opened else ""
+        return f"opened at raw {opened['zoom']}: {label}{menu}"
+
+    u.check("a just-opened map's zoom label is the real zoom", label_after_open, needs_dirty=True)
+
+    def fit_still_fits():
+        made = u.c.request("place_object", asset=u.asset("Objects"), x=u.cx, y=u.cy)["id"]
+        try:
+            r = u.c.request("fit_elements", ids=[made], pad=0.15)
+            (x0, y0), (x1, y1) = r["bounds"]
+            cam = r["camera"]
+            vw, vh = cam["viewport_size"]
+            assert cam["zoom"] * vw >= (x1 - x0) and cam["zoom"] * vh >= (y1 - y0), r
+            return f"{label_matches(cam)} shows {cam['zoom'] * vw:.0f} woxels for {x1 - x0:.0f}"
+        finally:
+            u.c.request("delete_element", id=made)
+
+    u.check("fit_elements on a dropdown level still fits", fit_still_fits, needs_dirty=True)
 
     def shot():
         r = u.c.request("screenshot")
@@ -2802,6 +2852,148 @@ def soft_shadows(u: Uat) -> None:
     )
 
 
+@group("animated_doors")
+def animated_doors(u: Uat) -> None:
+    # CePeU's Animated Doors marks objects and free-standing portals as doors
+    # and exports their motion. The bridge drives the mod's own edit and undo
+    # functions, and a bridge duplicate used to come out without the source's
+    # door settings, because the mod copies them only in its own paste.
+    import json
+
+    def ready() -> str | None:
+        info = u.c.request("ping").get("animated_doors") or {}
+        if not info.get("loaded"):
+            return "skipped: Animated Doors is not loaded"
+        if not info.get("verified"):
+            return f"skipped: Animated Doors {info.get('version')} is not a verified version"
+        return None
+
+    def door(ident: int) -> dict | None:
+        return u.c.request("get_element", id=ident).get("animated_door")
+
+    def refused(expect: str, **req) -> None:
+        try:
+            u.c.request("set_animated_door", **req)
+        except BridgeCommandError as exc:
+            assert expect in str(exc), f"unexplained refusal: {exc}"
+            return
+        raise AssertionError(f"accepted: {req}")
+
+    def assistant_sets_doors():
+        skip = ready()
+        if skip:
+            return skip
+        portal_asset = u.asset("Portals", "door") or u.asset("Portals")
+        obj = u.c.request("place_object", asset=u.asset("Objects"), x=u.cx - 600, y=u.cy)
+        free = u.c.request(
+            "add_portal",
+            asset=portal_asset,
+            x=u.cx,
+            y=u.cy,
+            mount="free",
+            rotation=90.0,
+            closed=True,
+            radius=1.0,
+            snap_max=128.0,
+            flip=False,
+            fallback_free=True,
+        )
+        x, y = u.cx + 2000, u.cy + 1200
+        wall = u.c.request(
+            "draw_wall", points=[[x - 400, y], [x + 400, y]], asset=u.asset("Walls") or ""
+        )
+        time.sleep(0.6)
+        mounted = u.c.request(
+            "add_portal",
+            asset=portal_asset,
+            x=x,
+            y=y,
+            mount="wall",
+            closed=True,
+            radius=1.0,
+            snap_max=128.0,
+            flip=False,
+            fallback_free=False,
+        )
+        ids = [obj["id"], free["id"]]
+        depth = u.c.request("get_status")["undo_depth"]
+        u.c.request("set_animated_door", ids=ids, enabled=True, animation="slide", hinge="b")
+        for ident in ids:
+            d = door(ident) or {}
+            assert d.get("enabled") and d.get("animation") == "slide" and d.get("hinge") == "b", (
+                ident,
+                d,
+            )
+        assert u.c.request("get_status")["undo_depth"] == depth + 1, "not one undo step"
+        declared_extension = door(obj["id"])["extension"]
+        u.c.request("set_animated_door", ids=[obj["id"]], extension=120, door_type="window")
+        d = door(obj["id"])
+        assert d["extension"] == 120 and d["door_type"] == "window", d
+        refused("mount='free'", ids=[mounted["id"]], enabled=True)
+        refused("no element", ids=[obj["id"], 999999], extension=10)
+        assert door(obj["id"])["extension"] == 120, "partly applied"
+        u.c.request("undo")
+        assert door(obj["id"])["extension"] == declared_extension, f"undo left {door(obj['id'])}"
+        u.c.request("undo")
+        for ident in ids:
+            assert door(ident) is None, f"{ident} is still a door"
+        u.c.request("redo")
+        assert (door(free["id"]) or {}).get("animation") == "slide", "redo did not restore it"
+        u.c.request("set_animated_door", ids=[free["id"]], enabled=False)
+        assert door(free["id"]) is None, "enabled=False left a door"
+        refused("not an animated door", ids=[free["id"]], swing="left")
+        u.c.request("delete_elements", ids=[obj["id"], free["id"], mounted["id"], wall["id"]])
+        return "declared, changed, refused, undone and redone on an object and a portal"
+
+    def duplicate_and_reopen_keep_doors():
+        skip = ready()
+        if skip:
+            return skip
+        obj = u.c.request("place_object", asset=u.asset("Objects"), x=u.cx + 600, y=u.cy)
+        u.c.request(
+            "set_animated_door", ids=[obj["id"]], enabled=True, state="locked", extension=45
+        )
+        dup = u.c.request("duplicate_object", id=obj["id"], dx=512, dy=0)
+        assert "animated door" in dup["copied"], f"door not copied: {dup}"
+        assert door(dup["id"]) == door(obj["id"]), (door(dup["id"]), door(obj["id"]))
+        name = f"uat-animdoors-{int(time.time())}.dungeondraft_map"
+        saved = u.c.request("save_map", filename=name)
+        u.made_file(saved["path"])
+        assert u.wait_for_save(45.0), "save never finished"
+        data = json.loads(pathlib.Path(saved["path"]).read_text())
+        store = (
+            data["mod"]
+            .get("CreepyCre._Lib", {})
+            .get("ComponentsApi", {})
+            .get("save_data", {})
+            .get("AnimatedDoors", {})
+            .get("door", [])
+        )
+        saved_ids = {int(e["node_id"]) for e in store if e["data"].get("enabled")}
+        assert {obj["id"], dup["id"]} <= saved_ids, f"saved doors {saved_ids}"
+        home = u.original_map_file
+        try:
+            u.reopen(saved["path"])
+            for ident in (obj["id"], dup["id"]):
+                d = door(ident) or {}
+                assert d.get("state") == "locked" and d.get("extension") == 45, (ident, d)
+        finally:
+            if home is not None:
+                u.reopen(str(home))
+        return "the copy kept its door, and both survived save and reopen"
+
+    u.check(
+        "animated_doors: the assistant declares, changes and undoes doors",
+        assistant_sets_doors,
+        needs_dirty=True,
+    )
+    u.check(
+        "animated_doors: a duplicate and a reopened map keep door settings",
+        duplicate_and_reopen_keep_doors,
+        needs_dirty=True,
+    )
+
+
 @group("sketch_tool")
 def sketch_tool(u: Uat) -> None:
     import base64
@@ -3211,7 +3403,23 @@ def history(u: Uat) -> None:
         )
         u.made_file(saved["path"])
         assert u.wait_for_save(timeout=45.0), "the scratch save never finished"
+        # Control: other mods can leak on a map change too. With the Unofficial
+        # Patch, Soft Shadows, Sketch Tool and Animated Doors all loaded, a
+        # reopen with no bridge history added 2,299 to 3,283 orphans, varying
+        # from one reopen to the next, where vanilla and each mod alone add
+        # none (macOS, 2026-11-14). A process-wide counter cannot find 15 nodes
+        # in that, so the case only measures where a plain reopen is clean.
+        plain = u.c.request("get_status")["engine_objects"]["orphan_nodes"]
+        u.reopen(saved["path"])
         baseline = u.c.request("get_status")["engine_objects"]["orphan_nodes"]
+        control = max(0, baseline - plain)
+        if control > 2:
+            if home is not None:
+                u.reopen(str(home))
+            return (
+                f"skipped: a plain map change already leaves {control} orphan nodes "
+                "with these mods, so history's 15 cannot be measured (run vanilla)"
+            )
         asset = u.asset("Objects")
         rows = [{"asset": asset, "x": u.cx - 1024 + i * 192, "y": u.cy - 3328} for i in range(10)]
         deleted = [entry["id"] for entry in u.c.request("place_objects", objects=rows)["objects"]]
@@ -3226,15 +3434,17 @@ def history(u: Uat) -> None:
             u.reopen(saved["path"])
             after = u.c.request("get_status")["engine_objects"]["orphan_nodes"]
             # Tolerance for an engine node in transit; the leak was all 15.
-            assert after <= baseline + 2, (
+            assert after <= baseline + control + 2, (
                 f"orphans {baseline} -> {baseline + held} with history -> {after} "
-                f"after the map change: history's nodes outlived their map"
+                f"after the map change (a plain reopen adds {control}): "
+                f"history's nodes outlived their map"
             )
         finally:
             if home is not None:
                 u.reopen(str(home))
         return (
-            f"history held {held} orphan nodes; after the map change {after} (baseline {baseline})"
+            f"history held {held} orphan nodes; after the map change {after} "
+            f"(baseline {baseline}, a plain reopen adds {control})"
         )
 
     u.check(

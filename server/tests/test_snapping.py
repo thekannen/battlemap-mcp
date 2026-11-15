@@ -138,3 +138,21 @@ def test_a_snapped_rect_has_all_four_corners_on_the_grid(grid, rect):
 
 def test_a_square_rect_snaps_its_two_corners_as_before():
     assert snap_rect(SQUARE_64, 10, 10, 510, 310) == (0.0, 0.0, 512.0, 320.0)
+
+
+def test_the_snap_mod_license_notice_ships_with_the_port():
+    """MIT: the copyright and permission notice travel with derived code."""
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    notice = (root / "NOTICE.md").read_text(encoding="utf-8")
+    assert "Copyright (c) 2024 Lievven" in notice
+    assert "The above copyright notice and this permission notice" in notice
+    # The export manifest lives only in the development repository; the
+    # production export carries NOTICE.md itself, checked above.
+    manifest = root / "tools/public_export_manifest.json"
+    if manifest.exists():
+        assert "NOTICE.md" in json.loads(manifest.read_text("utf-8"))
+    release = (root / "tools/release.py").read_text(encoding="utf-8")
+    assert 'bundle / "NOTICE.md"' in release

@@ -56,6 +56,7 @@ SERVER_FILES = (
     "bridge_client.py",
     "cli.py",
     "client_config.py",
+    "colors.py",
     "errors.py",
     "floorplan.py",
     "handshake.py",
@@ -70,6 +71,7 @@ SERVER_FILES = (
     "scene.py",
     "server.py",
     "shared_walls.py",
+    "skills.py",
     "snapping.py",
     "state_paths.py",
     "timing.py",
@@ -927,6 +929,8 @@ def build(
                     launcher_candidate,
                 )
             shutil.copy2(root / "LICENSE", bundle / "LICENSE")
+            # MIT requires each upstream notice to travel with its derived code.
+            shutil.copy2(root / "NOTICE.md", bundle / "NOTICE.md")
             python_license = python_runtime_license()
             shutil.copy2(python_license, bundle / "PYTHON-LICENSE.txt")
             shutil.copy2(root / "packaging/INSTALL.txt", bundle / "INSTALL.txt")

@@ -39,6 +39,8 @@ from pydantic import ValidationError as PydanticValidationError
 from . import (
     __version__,
     arrangement,
+    client_config,
+    colors,
     cropping,
     handshake,
     image_import,
@@ -47,6 +49,7 @@ from . import (
     lifecycle,
     mapfile,
     pack_contents,
+    skills,
     snapping,
     timing,
     updates,
@@ -110,11 +113,11 @@ PORT = int(_PORT_ENV) if _PORT_ENV else None
 INSTRUCTIONS = """\
 Build maps in a live Dungeondraft. Call ping, then get_status: most tools need
 an open map; get_status gives map_center and map_size_woxels. If ping
-fails, Dungeondraft needs a map open and the bridge mod, which
-install_dungeondraft_bridge installs; don't retry blindly.
+fails, Dungeondraft needs a map open and the bridge mod
+(install_dungeondraft_bridge); don't retry blindly.
 
-The map is shared: the user and other clients change it between turns.
-Re-read it before saying what's on it; never answer from memory.
+The map is shared: others change it between turns. Re-read it before
+saying what's on it; never answer from memory.
 
 Coordinates are woxels: 256 woxels = 1 tile, origin top-left, y grows DOWN.
 Rects: [x, y, w, h]. Rotation: degrees.
@@ -127,8 +130,8 @@ place_prefab / place_objects -> scatter_objects -> add_light -> look ->
 save_map, after each stage.
 
 Batch: place_objects, delete_elements take many in one undo step;
-list_assets takes `searches`. checkpoint(label) before a multi-step request;
-rollback_checkpoint(label) undoes all of it.
+list_assets takes `searches`. checkpoint(label) before a multi-step
+request; rollback_checkpoint(label) undoes it.
 
 Hex or custom grid? get_snap_settings; snap='auto' follows it.
 
@@ -137,9 +140,11 @@ ground; paint_material an edged patch; dig_cave caves.
 Resize or crop: set_map_size, crop_map.
 
 scatter_objects for incidental detail; arrange_objects to line walls, seat
-tables, dress surfaces. Hand-placed rows read as a grid.
-Establish a focal area, routes and quiet space; vary scale and rotation; run
-shadow paths along walls.
+tables, dress surfaces. Hand-placed rows read as a grid; run shadow paths
+along walls.
+
+Map-making procedures: get_skill() lists them. Read the one that fits
+before building or reviewing a map.
 
 Only draw_wall walls, add_portal doors and add_light lights reach a VTT:
 export_dd2vtt writes one, import_dd2vtt rebuilds one.
@@ -446,11 +451,20 @@ def ping() -> dict:
 
     `update_available` appears when a newer release has been published. The
     companion cannot update itself: pass its message and url to the user.
+    `duplicate_installs` appears when Claude has this server installed more
+    than one way: pass its message to the user too.
     """
     result = bridge.request("ping")
     if not isinstance(result, dict):
         return result
     _add_update_notice(result)
+    try:
+        installs = client_config.claude_installs()
+    except Exception:  # other apps' files; never let them break ping
+        installs = []
+    note = client_config.duplicate_note(installs, updates.install_channel())
+    if note is not None:
+        result["duplicate_installs"] = note
     running = result.get("bridge_sha256") or None
     expected = _package_bridge_sha256()
     if running is None or expected is None:
@@ -1351,6 +1365,25 @@ def _list_assets_one(
         )
         result["note"] = f"{incomplete} {result['note']}".strip()
     return result
+
+
+@tool()
+def get_skill(name: str = "", file: str = "") -> dict | str:
+    """Step-by-step map-making procedures: interiors, outdoor scenes, lighting,
+    materials, composition, visual review and rebuilding from a .dd2vtt.
+
+    Call with no arguments to list them, each with when to use it. Before
+    building or reviewing a map, read the one that fits the request:
+    get_skill(name="..."). It ends with the files it links to (shared
+    references, other skills); read those with get_skill(file="...") when it
+    tells you to. Plain markdown comes back.
+
+    If your client already loaded these as skills (a Claude Code plugin or a
+    Codex install), use those instead; the content is the same.
+    """
+    if not name and not file:
+        return skills.listing()
+    return skills.read(name=name, file=file)
 
 
 @tool()
@@ -3770,6 +3803,97 @@ def export_dd2vtt(
     }
 
 
+def _latest_export(name: str) -> Path:
+    """The export capture to sample: one named, or the newest."""
+    exports = [p for p in _generated_capture_files() if p.name.startswith("export-")]
+    if name and name != "latest":
+        exports = [p for p in exports if p.name == name]
+        if not exports:
+            raise ValidationError(f"no export capture named {name!r}; pass 'latest'")
+    if not exports:
+        raise ValidationError("no export to sample yet: call export_map first")
+    return exports[0]
+
+
+@tool()
+def sample_colors(
+    points: list[list[float]],
+    dd2vtt: str = "",
+    export: str = "latest",
+    radius: float = 32.0,
+) -> dict:
+    """Read the mean colour at map points, to match tints by number, not by eye.
+
+    For a rebuild: compare the source image with your build at the same
+    points (a floor patch, a wall, each rug) and adjust tints until max_diff
+    is a few levels. Tints judged by eye came out 10-20% too saturated.
+
+    points: up to 64 [x, y] map woxels, on what you want to compare.
+    dd2vtt: path to the Universal VTT export the map was rebuilt from. Its
+      image is the source, aligned as import_dd2vtt placed it.
+    export: 'latest' samples your newest export_map render, or name an
+      export file; '' skips it. Export with grid=False at the source's
+      pixels-per-grid (source_ppg in the reply), after each tint change:
+      with the grid drawn, identical floors differed by up to 22 levels.
+    radius: half-width in woxels of the square averaged around each point
+      (default 32, an eighth of a tile). Keep it inside one surface.
+
+    Returns each point's colour per source and, with both, diff_rgb (export
+    minus source, per channel: positive is lighter or more of that channel)
+    and max_diff. Both images include lighting; compare like with like.
+    """
+    colors.validate(points, radius)
+    source_ppg = None
+    if not dd2vtt and not export:
+        raise ValidationError("give dd2vtt, export, or both")
+    sources: dict[str, tuple[Any, float]] = {}
+    if dd2vtt:
+        try:
+            parsed = uvtt.read(Path(dd2vtt).expanduser())
+            image = uvtt.decoded_image(parsed)
+        except uvtt.UvttError as exc:
+            raise ValidationError(str(exc)) from exc
+        sources["source"] = (image, parsed.pixels_per_grid / WOXELS_PER_TILE)
+        source_ppg = parsed.pixels_per_grid
+    used = None
+    export_ppi = None
+    if export:
+        from PIL import Image as PILImage
+
+        used = _latest_export(export)
+        width_woxels, height_woxels = bridge.request("get_status").get("map_size_woxels") or [0, 0]
+        image = PILImage.open(used)
+        image.load()
+        if not width_woxels or not height_woxels:
+            raise ValidationError("open a map first")
+        if abs(image.width / image.height - width_woxels / height_woxels) > 0.01:
+            raise ValidationError(
+                f"{used.name} is not a render of this map's size; call export_map again"
+            )
+        sources["export"] = (image, image.width / width_woxels)
+        export_ppi = round(image.width / width_woxels * WOXELS_PER_TILE, 1)
+    result: dict[str, Any] = {
+        "radius": radius,
+        "samples": colors.sample(points, radius, sources),
+    }
+    if source_ppg is not None:
+        result["source_ppg"] = source_ppg
+    if used is not None:
+        result["export_file"] = used.name
+        result["export_ppi"] = export_ppi
+        result["export_age_seconds"] = round(time.time() - used.stat().st_mtime)
+        if (
+            source_ppg is not None
+            and export_ppi is not None
+            and abs(export_ppi - source_ppg) > 0.05 * source_ppg
+        ):
+            result["note"] = (
+                f"export_map(ppi={source_ppg:g}, grid=False) to compare like with "
+                "like: at another ppi, the same surface reads a few levels apart."
+            )
+    return result
+
+
 @tool()
 def import_dd2vtt(
     path: str,
@@ -3781,6 +3905,7 @@ def import_dd2vtt(
     lights: bool = True,
     ambient: bool = True,
     wall_asset: str = "",
+    wall_color: str = "",
     portal_asset: str = DD2VTT_DOOR,
     window_asset: str = DD2VTT_WINDOW,
 ) -> dict:
@@ -3804,11 +3929,17 @@ def import_dd2vtt(
     first. A region export is cropped to its region. Build on a new map:
     portals mount on the nearest wall, existing walls included.
 
+    wall_color: hex tint for the walls, matched to the trace. Empty takes
+    Dungeondraft's default wall tint, a dark grey, so light walls such as
+    sandstone come out dark. Set it here: changing it later means redrawing
+    the walls and re-adding their doors.
+
     One checkpoint, "import_dd2vtt", precedes the edits:
     rollback_checkpoint("import_dd2vtt") undoes them, except a resize, the
     ambient light and the trace. Hide the trace with
     set_trace_image(clear=true) before the final save_map.
     """
+    require_hex_color(wall_color, "wall_color")
     try:
         export = uvtt.read(Path(path).expanduser())
     except uvtt.UvttError as exc:
@@ -3826,6 +3957,7 @@ def import_dd2vtt(
         "size_matches": current == tiles,
         "region_origin": list(export.origin),
         "walls": len(planned.walls),
+        "wall_color": wall_color or "Dungeondraft's default (dark grey)",
         "doorways_joined": planned.joined_doorways,
         "portals": len(planned.portals),
         "lights": len(planned.lights),
@@ -3867,7 +3999,15 @@ def import_dd2vtt(
         return created.get("id") if isinstance(created, dict) else None
 
     wall_ids = [
-        attempt("wall", draw_wall, w["points"], asset=wall_asset, loop=w["loop"], snap="none")
+        attempt(
+            "wall",
+            draw_wall,
+            w["points"],
+            asset=wall_asset,
+            loop=w["loop"],
+            color=wall_color,
+            snap="none",
+        )
         for w in planned.walls
     ]
     portal_ids = [
@@ -4897,6 +5037,81 @@ def set_soft_shadow(
 
 
 @tool()
+def set_animated_door(
+    ids: list[int],
+    enabled: bool | None = None,
+    hinge: str | None = None,
+    swing: str | None = None,
+    axis: str | None = None,
+    door_type: str | None = None,
+    animation: str | None = None,
+    state: str | None = None,
+    double_door: bool | None = None,
+    extension: Annotated[int | None, Field(ge=0, le=180)] = None,
+    hinge_offset_a: Annotated[float | None, Field(ge=0)] = None,
+    hinge_offset_b: Annotated[float | None, Field(ge=0)] = None,
+) -> dict:
+    """Mark objects or free-standing portals as CePeU's Animated Doors, or change them.
+
+    Needs the Animated Doors mod (ping reports animated_doors); refused
+    without it. Its own Export window writes the animated Universal VTT;
+    export_dd2vtt does not carry the animation.
+    Only objects and free-standing portals on the current level can be doors.
+    A wall-mounted door cannot: an opening door would show the wall under it.
+    Leave a gap in the wall and place the door in it with
+    add_portal(mount='free', rotation=...) or place_object.
+    enabled: true declares a door, using the mod's defaults for anything not
+    given; false removes it and takes no other setting. Other settings change
+    declared doors only.
+    hinge: 'a' or 'b', the end it turns on (a: left or top edge of the
+    unrotated image). swing: 'left' or 'right'. axis: 'width' or 'height', the
+    image axis along the door. door_type: 'door', 'secret' or 'window'.
+    animation: swing, slide, swivel, ascend or descend. state: 'closed',
+    'open' or 'locked' (exported start state; the art does not move).
+    double_door: two leaves. extension: 0-180, 90 is normal strength.
+    hinge_offset_a/_b: crop inward from each end, in woxels.
+    One undo step for all ids; all are checked before any changes.
+    get_element(id) reports animated_door. duplicate_object copies it.
+    """
+    if not ids or len(ids) > BATCH_LIMIT:
+        raise ValidationError(f"ids must list 1 to {BATCH_LIMIT} elements")
+    for ident in ids:
+        if isinstance(ident, bool) or not isinstance(ident, int) or ident < 0:
+            raise ValidationError(f"element ids must be nonnegative integers, got {ident!r}")
+    params: dict[str, Any] = {"ids": ids}
+    for name, value, allowed in (
+        ("hinge", hinge, ["a", "b"]),
+        ("swing", swing, ["left", "right"]),
+        ("axis", axis, ["width", "height"]),
+        ("door_type", door_type, ["door", "secret", "window"]),
+        ("animation", animation, ["swing", "slide", "swivel", "ascend", "descend"]),
+        ("state", state, ["closed", "open", "locked"]),
+    ):
+        if value is not None:
+            require_choice(value, allowed, name)
+            params[name] = value
+    if extension is not None:
+        if isinstance(extension, bool) or not 0 <= extension <= 180:
+            raise ValidationError("extension must be a whole number from 0 to 180")
+        params["extension"] = extension
+    for name, number in (("hinge_offset_a", hinge_offset_a), ("hinge_offset_b", hinge_offset_b)):
+        if number is not None:
+            require_finite(number, name)
+            if number < 0:
+                raise ValidationError(f"{name} must be 0 or more")
+            params[name] = number
+    if double_door is not None:
+        params["double_door"] = double_door
+    if enabled is not None:
+        if enabled is False and len(params) > 1:
+            raise ValidationError("enabled=False removes the door; it takes no other settings")
+        params["enabled"] = enabled
+    if len(params) == 1:
+        raise ValidationError("nothing to change: pass enabled or a door setting")
+    return bridge.request("set_animated_door", **params)
+
+
+@tool()
 def duplicate_object(id: int, dx: float = 64.0, dy: float = 0.0, snap: str = "") -> dict:
     """Duplicate an object by id, offset by (dx, dy) woxels. Returns the new element id.
 
@@ -5414,6 +5629,9 @@ def get_camera() -> dict:
 
     zoom is a Camera2D factor where LARGER = zoomed OUT (zoom 0.5 magnifies 2x,
     zoom 2.0 shows twice as much). Use this to read the view before adjusting it.
+    zoom_label is the real zoom as a percentage. If Dungeondraft's own zoom menu
+    shows something else (it opens maps at 80% labelled 100%), zoom_menu says
+    what the user sees there.
     """
     return bridge.request("get_camera")
 
@@ -5427,7 +5645,9 @@ def set_camera(
     """Pan and/or zoom the editor camera. Returns the resulting camera state.
 
     x, y: world (woxel) center to move the view to (omit to keep current).
-    zoom: Camera2D factor (LARGER = zoomed OUT; ~0.5 = a close look, ~2 = wide).
+    zoom: Camera2D factor (LARGER = zoomed OUT). It lands on the nearest of
+    Dungeondraft's own zoom levels, 4 / percent: 0.5 = 800%, 4 = 100%, 40 = 10%.
+    zoom_label in the reply is the zoom the editor's zoom menu then shows.
     Follow with screenshot() to see the framed view.
     """
     params: dict = {}
@@ -5444,7 +5664,8 @@ def set_camera(
 def focus_element(id: int, zoom: float | None = None) -> dict:
     """Center the camera on an element by id (works for any kind, including text).
 
-    zoom: optional Camera2D factor to apply (LARGER = zoomed OUT). Follow with
+    zoom: optional Camera2D factor to apply (LARGER = zoomed OUT), landing on
+    the nearest Dungeondraft zoom level as in set_camera. Follow with
     screenshot() to verify a specific element (e.g. a door cut into a wall).
     """
     params: dict = {"id": id}
@@ -5460,7 +5681,8 @@ def fit_elements(ids: list[int] | None = None, pad: float = 0.15) -> dict:
     ids: omit to frame the entire map — this is the normal way to look at your
       work. Pass ids to frame just those elements instead; ids without a
       position are skipped and listed in the 'missing' field.
-    pad: extra margin as a fraction (0.15 = 15%).
+    pad: extra margin as a fraction (0.15 = 15%). The zoom is the closest
+      Dungeondraft zoom level that still fits, at most 800%.
 
     Prefer this over set_camera: it computes the zoom for you, and set_camera's
     zoom is woxels-per-pixel, which runs backwards from the intuition that a

@@ -121,8 +121,13 @@ const META_TOKEN := "mcp_bridge_token"
 # Every staged image name this process has embedded; see _import_image.
 const META_EMBEDDED := "mcp_bridge_embedded"
 
+const ZOOM_UNIT_FALLBACK := 4.0
+
 var _instance_id := 0
 var _port := PORT
+# Raw camera zoom of the 100% level, as _apply_zoom last measured it; 0 until
+# a bridge zoom has run in this instance. See _camera_state.
+var _zoom_unit := 0.0
 # Per-command log bracketing, off by default so normal use stays quiet.
 # Toggled at runtime by set_verbose — no restart needed.
 var _verbose := false
@@ -949,6 +954,10 @@ func _build_op(cmd, req, result, pre, terrain_before, cave_before = null,
 		var shadow_op = _soft_shadow_op
 		_soft_shadow_op = null
 		return shadow_op
+	elif cmd == "set_animated_door" and _animated_door_op != null:
+		var door_op = _animated_door_op
+		_animated_door_op = null
+		return door_op
 	elif cmd == "paint_material" and _material_before != null:
 		var before = _material_before
 		_material_before = null
@@ -1133,6 +1142,8 @@ func _apply_op(op, undo : bool):
 				var shadow_module = _soft_shadows_module(str(entry["ref"]))
 				if shadowed != null and shadow_module != null:
 					_soft_shadow_apply(shadowed, shadow_module, entry["before"] if undo else entry["after"])
+		"animated_door":
+			_animated_door_replay(op, undo)
 		"wall_merge":
 			_apply_wall_merge(op, undo)
 		"transform_many":
@@ -2253,6 +2264,7 @@ func _safe_dispatch(req : Dictionary) -> Dictionary:
 			"bridge_root": Global.get("Root", ""), "process_id": OS.get_process_id(),
 			"bridge_instance": _instance_id, "unofficial_patch": _patch_info(),
 			"soft_shadows": _soft_shadows_info(),
+			"animated_doors": _animated_doors_info(),
 			"bridge_version": _bridge_version })
 		"get_status": return _get_status()
 		"list_asset_categories": return _list_asset_categories()
@@ -2304,6 +2316,7 @@ func _safe_dispatch(req : Dictionary) -> Dictionary:
 		# --- create ---
 		"import_image": return _import_image(req)
 		"set_soft_shadow": return _set_soft_shadow(req)
+		"set_animated_door": return _set_animated_door(req)
 		"place_object": return _place_object(req)
 		"place_objects": return _place_objects(req)
 		"merge_walls": return _merge_walls(req)
@@ -2415,6 +2428,7 @@ func _get_status() -> Dictionary:
 		"bridge_instance": _instance_id,
 		"unofficial_patch": _patch_info(),
 		"soft_shadows": _soft_shadows_info(),
+		"animated_doors": _animated_doors_info(),
 		# A dialog is holding the editor's input: a popup from Dungeondraft or a
 		# mod (the Unofficial Patch shows several on its own). The bridge still
 		# answers, but the user may need to close it.
@@ -3947,6 +3961,9 @@ func _get_element(req : Dictionary) -> Dictionary:
 		var shadow = _soft_shadow_saved(node)
 		if shadow != null:
 			out["soft_shadow"] = shadow
+	var door = _animated_door_saved(node)
+	if door != null:
+		out["animated_door"] = _animated_door_public(door)
 	return _ok(out)
 
 func _list_levels() -> Dictionary:
@@ -5771,6 +5788,7 @@ func _duplicate_object(req : Dictionary) -> Dictionary:
 	var copied = ["scale", "rotation", "modulate", "shadow"]
 	copied.append_array(_patch_copy_node_data(src, prop))
 	copied.append_array(_soft_shadows_copy_node_data(src, prop))
+	copied.append_array(_animated_doors_copy_node_data(src, prop))
 	return _ok({ "id": _id(prop), "position": _vec(prop.position),
 		"copied": copied,
 		"note": "colour is baked at placement and cannot be copied" })
@@ -6349,20 +6367,78 @@ func _camera():
 func _viewport_size() -> Vector2:
 	return Global.World.get_viewport().get_visible_rect().size
 
-func _apply_zoom(cam, z : float) -> void:
+# `fit` picks the closest level that still shows at least raw zoom `z`, so a
+# framed box stays whole; otherwise the nearest level (by ratio) is used.
+func _apply_zoom(cam, z : float, fit := false) -> void:
 	z = max(0.01, z)
-	_patch_release_zoom()
-	cam.zoom = Vector2(z, z)
-	# Keep DD's bottom-bar zoom dropdown in sync with the raw zoom value.
-	if Global.Editor.has_method("SetZoomOptionByRaw"):
-		Global.Editor.SetZoomOptionByRaw(z)
+	var options = Global.Editor.get("ZoomOptions")
+	var levels = Global.Editor.get("ZoomLevels")
+	if options == null or not is_instance_valid(options) or levels == null \
+			or levels.size() == 0 or options.get_item_count() != levels.size() \
+			or not cam.has_method("SetZoom"):
+		cam.zoom = Vector2(z, z)
+		return
+	# The raw zoom of the 100% level, measured rather than assumed.
+	cam.SetZoom(1.0)
+	var unit = cam.zoom.x
+	if unit <= 0.0:
+		unit = ZOOM_UNIT_FALLBACK
+	_zoom_unit = unit
+	var best := -1
+	var best_cost := INF
+	var widest := 0
+	for i in range(levels.size()):
+		var level = float(levels[i])
+		if level <= 0.0:
+			continue
+		if level < float(levels[widest]):
+			widest = i
+		var raw = unit / level
+		var cost
+		if fit:
+			if raw < z * 0.999:
+				continue
+			cost = raw - z
+		else:
+			cost = abs(log(raw / z))
+		if cost < best_cost:
+			best = i
+			best_cost = cost
+	if best == -1:
+		best = widest
+	# Choosing an entry is how a user zooms. It is also the Unofficial Patch's
+	# own exit from its pinned extended zoom, which re-applied that zoom every
+	# frame and silently undid a bridge zoom.
+	options.select(best)
+	options.emit_signal("item_selected", best)
+	var want = unit / float(levels[best])
+	if abs(cam.zoom.x - want) > 0.001 and Global.Editor.has_method("_on_ZoomOptions_item_selected"):
+		Global.Editor._on_ZoomOptions_item_selected(best)
 
 func _camera_state(cam) -> Dictionary:
-	return {
+	var state = {
 		"position": _vec(cam.global_position),
 		"zoom": cam.zoom.x,
 		"viewport_size": _vec(_viewport_size()),
 	}
+
+	var options = Global.Editor.get("ZoomOptions")
+	if options == null or not is_instance_valid(options) or not options.has_method("get_item_text"):
+		return state
+	var index = int(options.selected)
+	if index < 0 or index >= options.get_item_count():
+		return state
+	var shown = options.get_item_text(index)
+	state["zoom_label"] = shown
+	var levels = Global.Editor.get("ZoomLevels")
+	if levels == null or index >= levels.size() or float(levels[index]) <= 0.0 or cam.zoom.x <= 0.0:
+		return state
+	var unit = _zoom_unit if _zoom_unit > 0.0 else ZOOM_UNIT_FALLBACK
+	var menu_raw = unit / float(levels[index])
+	if abs(cam.zoom.x - menu_raw) > 0.001 * cam.zoom.x:
+		state["zoom_label"] = str(int(round(100.0 * unit / cam.zoom.x))) + "%"
+		state["zoom_menu"] = shown
+	return state
 
 func _get_camera() -> Dictionary:
 	var cam = _camera()
@@ -6404,17 +6480,14 @@ func _fit_elements(req : Dictionary) -> Dictionary:
 		cam0.global_position = Vector2(dims.x * 0.5, dims.y * 0.5)
 		var vp = cam0.get_viewport().size
 		var pad0 = 1.0 + float(req.get("pad", 0.05))
-		cam0.zoom = Vector2(max(dims.x / vp.x, dims.y / vp.y) * pad0,
-			max(dims.x / vp.x, dims.y / vp.y) * pad0)
+		_apply_zoom(cam0, max(dims.x / vp.x, dims.y / vp.y) * pad0, true)
 		# Same response shape as the id path below, so a caller can parse one
 		# thing. These used to differ — {fitted, position, zoom} here versus
 		# {fit, missing, center, bounds, camera} there — for the same tool.
 		return _ok({ "fit": "whole map", "missing": [],
 			"center": _vec(cam0.global_position),
 			"bounds": [[0, 0], [dims.x, dims.y]],
-			"camera": { "position": _vec(cam0.global_position),
-				"zoom": cam0.zoom.x,
-				"viewport_size": [vp.x, vp.y] } })
+			"camera": _camera_state(cam0) })
 
 	var mn = Vector2(INF, INF)
 	var mx = Vector2(-INF, -INF)
@@ -6447,7 +6520,7 @@ func _fit_elements(req : Dictionary) -> Dictionary:
 	else:
 		var span = raw * pad
 		z = max(span.x / max(vp.x, 1.0), span.y / max(vp.y, 1.0))
-	_apply_zoom(cam, z)
+	_apply_zoom(cam, z, raw.length() >= 1.0)
 	return _ok({
 		"fit": used, "missing": missing,
 		"center": _vec(center), "bounds": [_vec(mn), _vec(mx)],
@@ -7627,6 +7700,210 @@ func _set_soft_shadow(req : Dictionary) -> Dictionary:
 		"offset": [first.get("offset_x"), first.get("offset_y")],
 		"color": first.get("shadow_color") })
 
+const ANIMATED_DOORS_VERIFIED := ["1.0"]
+const ANIMATED_DOOR_MAX_IDS := 100
+const ANIMATED_DOOR_TYPES := { "door": 1, "secret": 2, "window": -1 }
+const ANIMATED_DOOR_ANIMATIONS := ["swing", "slide", "swivel", "ascend", "descend"]
+const ANIMATED_DOOR_STATES := ["closed", "open", "locked"]
+var _animated_door_op = null
+var _animated_doors_version_cache := {}
+
+func _animated_doors_controller():
+	if not Engine.has_meta("AnimatedDoors.controller"):
+		return null
+	var c = Engine.get_meta("AnimatedDoors.controller")
+	if typeof(c) != TYPE_OBJECT or not is_instance_valid(c):
+		return null
+	if c.get("stopped") != false or c.get("doors") == null or c.get("adapter") == null:
+		return null
+	return c
+
+func _animated_doors_info() -> Dictionary:
+	var c = _animated_doors_controller()
+	if c == null:
+		return { "loaded": false }
+	var root = str(c.get("mod_root"))
+	if not _animated_doors_version_cache.has(root):
+		var version = ""
+		var f = File.new()
+		if root != "" and f.open(root.plus_file("mod.ddmod"), File.READ) == OK:
+			var parsed = JSON.parse(f.get_as_text())
+			f.close()
+			if parsed.error == OK and typeof(parsed.result) == TYPE_DICTIONARY:
+				version = str(parsed.result.get("version", ""))
+		_animated_doors_version_cache[root] = version
+	var version = _animated_doors_version_cache[root]
+	var parts = version.split(".")
+	var minor = "%s.%s" % [parts[0], parts[1]] if parts.size() >= 2 else ""
+	return { "loaded": true, "version": version, "verified": minor in ANIMATED_DOORS_VERIFIED }
+
+func _animated_doors_ready():
+	var info = _animated_doors_info()
+	if not info.loaded:
+		return "Animated Doors is not loaded in this Dungeondraft"
+	if not info.verified:
+		return "Animated Doors %s has not been checked with this bridge; only %s are driven" % [info.version, str(ANIMATED_DOORS_VERIFIED)]
+	return null
+
+# A node's door settings when it is a declared door, else null.
+func _animated_door_saved(node):
+	if _animated_doors_ready() != null or node == null or not node.has_meta("node_id"):
+		return null
+	var doors = _animated_doors_controller().doors
+	if not doors.has_component(node):
+		return null
+	var component = doors.get_component(node)
+	if component.read_only or typeof(component.data) != TYPE_DICTIONARY \
+			or not component.data.get("enabled", false):
+		return null
+	return component.data.duplicate(true)
+
+# The mod's settings in the words set_animated_door takes.
+func _animated_door_public(data : Dictionary) -> Dictionary:
+	var door_type = "door"
+	for type_name in ANIMATED_DOOR_TYPES:
+		if ANIMATED_DOOR_TYPES[type_name] == data.get("door_type"):
+			door_type = type_name
+	return { "enabled": data.get("enabled", false),
+		"hinge": "b" if data.get("hinge_endpoint") == "end" else "a",
+		"swing": data.get("swing_direction"), "axis": data.get("axis"),
+		"door_type": door_type, "animation": data.get("animation_type"),
+		"state": data.get("door_state"), "double_door": data.get("double_door"),
+		"extension": data.get("swing_degrees"),
+		"hinge_offset_a": data.get("hinge_offset_a"), "hinge_offset_b": data.get("hinge_offset_b") }
+
+func _animated_door_number(req : Dictionary, key : String, low : float, high : float):
+	var v = req[key]
+	if not (typeof(v) in [TYPE_INT, TYPE_REAL]) or is_nan(float(v)) or is_inf(float(v)) \
+			or float(v) < low or float(v) > high:
+		return _err("'%s' must be a number from %s to %s" % [key, str(low), str(high)])
+	return null
+
+func _set_animated_door(req : Dictionary) -> Dictionary:
+	_animated_door_op = null
+	var not_ready = _animated_doors_ready()
+	if not_ready != null:
+		return _err(not_ready)
+	var c = _animated_doors_controller()
+	if c.transaction.state != "IDLE" or c.adapter.exporting():
+		return _err("Animated Doors is exporting; try again when it finishes")
+	var ids = req.get("ids", [])
+	if typeof(ids) != TYPE_ARRAY or ids.empty() or ids.size() > ANIMATED_DOOR_MAX_IDS:
+		return _err("'ids' must list 1 to %d element ids" % ANIMATED_DOOR_MAX_IDS)
+	# The tool's words -> the mod's own field names and values.
+	var fields := {}
+	if req.has("enabled"):
+		if typeof(req["enabled"]) != TYPE_BOOL:
+			return _err("'enabled' must be true or false")
+		fields["enabled"] = req["enabled"]
+	var choices = [["hinge", "hinge_endpoint", { "a": "begin", "b": "end" }],
+		["swing", "swing_direction", { "left": "left", "right": "right" }],
+		["axis", "axis", { "width": "width", "height": "height" }],
+		["door_type", "door_type", ANIMATED_DOOR_TYPES],
+		["state", "door_state", { "closed": "closed", "open": "open", "locked": "locked" }]]
+	for row in choices:
+		if req.has(row[0]):
+			var key = str(req[row[0]])
+			if not row[2].has(key):
+				return _err("'%s' must be one of %s" % [row[0], str(row[2].keys())])
+			fields[row[1]] = row[2][key]
+	if req.has("animation"):
+		if not str(req["animation"]) in ANIMATED_DOOR_ANIMATIONS:
+			return _err("'animation' must be one of %s" % str(ANIMATED_DOOR_ANIMATIONS))
+		fields["animation_type"] = str(req["animation"])
+	if req.has("double_door"):
+		if typeof(req["double_door"]) != TYPE_BOOL:
+			return _err("'double_door' must be true or false")
+		fields["double_door"] = req["double_door"]
+	if req.has("extension"):
+		var bad = _animated_door_number(req, "extension", 0, 180)
+		if bad != null: return bad
+		if float(req["extension"]) != int(req["extension"]):
+			return _err("'extension' must be a whole number from 0 to 180")
+		fields["swing_degrees"] = int(req["extension"])
+	for key in ["hinge_offset_a", "hinge_offset_b"]:
+		if req.has(key):
+			var bad = _animated_door_number(req, key, 0, 1.0e6)
+			if bad != null: return bad
+			fields[key] = float(req[key])
+	if fields.empty():
+		return _err("nothing to change: pass enabled or a door setting")
+	if fields.get("enabled", true) == false and fields.size() > 1:
+		return _err("enabled=false removes the door; it takes no other settings")
+	var eligible = c.adapter.list_assets()
+	var stool = Global.Editor.Tools["SelectTool"]
+	var plan := []
+	# Validate every element before changing any, so a bad id changes nothing.
+	for raw in ids:
+		if not (typeof(raw) in [TYPE_INT, TYPE_REAL]):
+			return _err("element ids must be integers; nothing was changed")
+		var node = Global.World.GetNodeByID(int(raw))
+		if node == null:
+			return _err("no element with id %s; nothing was changed" % str(raw))
+		if not node in eligible:
+			var kind = KIND_NAMES.get(stool.GetSelectableType(node), "unknown")
+			if kind in ["wall_portal", "portal"] and node.get("IsFreestanding") == false:
+				return _err("element %s is a door mounted on a wall; Animated Doors animates only objects and free-standing portals. Place one with add_portal(mount='free') in the wall's gap. Nothing was changed" % str(raw))
+			return _err("element %s is a %s; Animated Doors animates objects and free-standing portals on the current level. Nothing was changed" % [str(raw), kind])
+		var component = c.doors.get_component(node)
+		if component.read_only:
+			return _err("element %s has door settings Animated Doors cannot read (%s); nothing was changed" % [str(raw), component.issue])
+		if not component.data.get("enabled", false) and not fields.get("enabled", false):
+			if fields.has("enabled"):
+				continue
+			return _err("element %s is not an animated door yet; pass enabled=true to declare it. Nothing was changed" % str(raw))
+		plan.append({ "node": node, "id": str(int(node.get_meta("node_id"))),
+			"component": component, "before": component.data.duplicate(true) })
+	if plan.empty():
+		return _ok({ "updated": 0, "ids": ids, "note": "none of these were animated doors" })
+	var mod_ids := []
+	for step in plan:
+		mod_ids.append(step["id"])
+	c._edit_ids(fields, mod_ids)
+	var entries := []
+	var doors := {}
+	for step in plan:
+		var after = step["component"].data.duplicate(true)
+		doors[step["id"]] = _animated_door_public(after)
+		if after.hash() != step["before"].hash():
+			entries.append({ "id": step["id"], "before": step["before"], "after": after })
+	if entries.empty():
+		# _edit_ids returns without recording when a crop leaves no artwork.
+		for step in plan:
+			for key in fields:
+				if step["before"].get(key) != fields[key]:
+					return _err("Animated Doors refused the change (a hinge offset may crop away the whole image); nothing was changed")
+	if not entries.empty():
+		_animated_door_op = { "kind": "animated_door", "generation": c.generation, "entries": entries }
+	return _ok({ "updated": entries.size(), "ids": ids, "doors": doors })
+
+func _animated_door_replay(op : Dictionary, undo : bool) -> void:
+	var c = _animated_doors_controller()
+	if c == null or c.generation != op["generation"]:
+		return
+	var changes := []
+	for entry in op["entries"]:
+		changes.append({ "kind": "portal", "id": entry["id"],
+			"before": entry["before"], "after": entry["after"] })
+	c.apply_history(changes, "before" if undo else "after", c.generation)
+
+func _animated_doors_copy_node_data(src, dst) -> Array:
+	var data = _animated_door_saved(src)
+	if data == null or dst == null or not is_instance_valid(dst):
+		return []
+	_id(dst)
+	if not dst.has_meta("node_id"):
+		return []
+	var c = _animated_doors_controller()
+	var target = c.doors.get_component(dst)
+	if target.read_only:
+		return []
+	target.data = data
+	if c.get("standalone") != null:
+		c.standalone.flush()
+	c._refresh()
+	return ["animated door"]
+
 func _patch_loaded() -> bool:
 	return _patch_info().loaded
 
@@ -7667,15 +7944,6 @@ func _layer_rule() -> String:
 	if _patch_loaded():
 		rule += ", or %d (the Unofficial Patch's Above Lights layer)" % PATCH_ABOVE_LIGHTS_LAYER
 	return rule
-
-func _patch_release_zoom() -> void:
-	var zoom = _patch_handler("up_zoomunlock_listener")
-	if zoom == null or zoom.get("_extended") != true:
-		return
-	var options = Global.Editor.get("ZoomOptions")
-	if options == null or not is_instance_valid(options) or not options.has_signal("item_selected"):
-		return
-	options.emit_signal("item_selected", int(options.selected))
 
 func _patch_adopt_text() -> void:
 	var fix = _patch_handler("_TextToolFixListener")

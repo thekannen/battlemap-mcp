@@ -277,3 +277,88 @@ def register_opencode(
         manual_command=None if completed.returncode == 0 else command,
         client_cli_available=True,
     )
+
+
+SERVER_NAME = "battlemap"
+PLUGIN_NAME = "battlemap-mcp"
+
+
+def _claude_app_dir() -> Path | None:
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Claude"
+    if sys.platform == "win32":
+        return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "Claude"
+    return None
+
+
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+
+
+def _desktop_extensions(app_dir: Path) -> list[dict[str, Any]]:
+    data = _read_json(app_dir / "extensions-installations.json")
+    found = []
+    extensions = data.get("extensions") if isinstance(data, dict) else None
+    for ident, entry in (extensions or {}).items() if isinstance(extensions, dict) else []:
+        manifest = entry.get("manifest") if isinstance(entry, dict) else None
+        if not isinstance(manifest, dict) or manifest.get("name") != SERVER_NAME:
+            continue
+        settings = _read_json(app_dir / "Claude Extensions Settings" / f"{ident}.json")
+        if isinstance(settings, dict) and settings.get("isEnabled") is False:
+            continue
+        found.append({"route": "Claude desktop extension", "version": entry.get("version")})
+    return found
+
+
+def _code_plugins() -> list[dict[str, Any]]:
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    base = Path(config_dir) if config_dir else Path.home() / ".claude"
+    data = _read_json(base / "plugins" / "installed_plugins.json")
+    plugins = data.get("plugins") if isinstance(data, dict) else None
+    found = []
+    for key, entries in plugins.items() if isinstance(plugins, dict) else []:
+        if str(key).split("@", 1)[0] != PLUGIN_NAME or not isinstance(entries, list):
+            continue
+        version = entries[0].get("version") if entries and isinstance(entries[0], dict) else None
+        found.append({"route": "Claude Code plugin", "version": version})
+    return found
+
+
+def claude_installs() -> list[dict[str, Any]]:
+    """Every route by which a Claude app on this computer loads this server."""
+    installs: list[dict[str, Any]] = []
+    if _claude_registered_command():
+        installs.append({"route": "Claude Code connection", "version": None})
+    installs.extend(_code_plugins())
+    app_dir = _claude_app_dir()
+    if app_dir is not None:
+        installs.extend(_desktop_extensions(app_dir))
+        desktop_config = claude_registry_paths().get("Claude Desktop (chat)")
+        if desktop_config and inspect_registration(desktop_config).startswith("registered"):
+            installs.append({"route": "Claude desktop config file", "version": None})
+    return installs
+
+
+def duplicate_note(installs: list[dict[str, Any]], running: str) -> dict[str, Any] | None:
+    """What to tell the user when more than one route is installed."""
+    if len(installs) < 2:
+        return None
+    named = ", ".join(
+        f"{item['route']} ({item['version']})" if item.get("version") else item["route"]
+        for item in installs
+    )
+    return {
+        "installs": installs,
+        "this_one": running,
+        "message": (
+            f"This Dungeondraft server is installed for Claude {len(installs)} ways: "
+            f"{named}. Where two load in the same app (Claude Code with a plugin "
+            "and a connection, or the Claude desktop app's Code tab), every tool "
+            "appears twice, possibly from different versions. Tell the user and "
+            "suggest keeping one: Settings > Extensions in the desktop app, /plugin "
+            f"in Claude Code, or `claude mcp remove {SERVER_NAME}` for a connection."
+        ),
+    }

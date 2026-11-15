@@ -1275,7 +1275,7 @@ def test_vtt_rebuild_imports_structure_and_rebuilds_art_by_eye():
     assert text.index("prepare_map_with_packs") < text.index("confirm=true")
     assert "no door/window field" in text and "vtt_reversed_portals" in text
     # Lessons from the first rebuild: material, not water; one scale.
-    assert "not water" in text and "One scale number for the whole map" in text
+    assert "not water" in text and "one scale number for the whole map" in text
     # The 2026-10-11 skill-guided rebuild fitted each tree's size (scales 0.5
     # to 2.7 where the original used ~1.5 throughout) and scattered 900
     # pebbles where the original had gravel terrain.
@@ -1285,6 +1285,33 @@ def test_vtt_rebuild_imports_structure_and_rebuilds_art_by_eye():
     assert text.index("Dungeondraft's own library first") < text.index("search_pack_contents`")
     # The trace is saved with the map and must be cleared.
     assert "set_trace_image(clear=true)" in text
+
+
+def test_vtt_rebuild_makes_a_faithful_copy_the_default():
+    """Runtime behavior and validation."""
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-vtt-rebuild" / "SKILL.md").read_text()
+    flat = " ".join(text.split())
+    # 1. Full resolution, by grid lines, which survive a client's scaling.
+    assert "Measure at full size, never from a shrunken view" in flat
+    assert "Grid lines stay correct however the client scales" in flat
+    assert text.index("Capture your reference views first") < text.index("## 4. Rebuild")
+    # 2. Assets identified on a contact sheet, not from their names.
+    assert "Identify each asset by looking, not by its name" in flat
+    assert "egypt_table_01" in text and "bar_table" in text
+    # 3. Sized from the drawn size; interiors are not one scale.
+    assert "scale = measured woxels ÷ drawn woxels" in flat
+    assert "Interiors do not work that way" in flat
+    # 4. Colours compared by number, which a desktop client cannot do by eye.
+    assert "too saturated" in flat and "sample_colors(points, dd2vtt=path)" in flat
+    # 5. The import audited before the art: wall tint, portals, blending.
+    assert text.index("wall_color") < text.index("confirm=true")
+    assert text.index("Audit the import before any art") < text.index("## 3.")
+    assert "set_terrain_blending(enabled=true)" in text
+    # 6. Verification gates "done".
+    assert "Do not report the rebuild as done until" in flat
+    # 7. Unmatched parts are reported, never substituted.
+    assert "List everything you could not match and why" in flat
+    assert "Simple Tiles laid with the tile brush cannot be repainted" in flat
 
 
 def test_the_build_loop_says_which_way_closed_goes():

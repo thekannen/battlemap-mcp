@@ -419,16 +419,16 @@ def _portal_radius(record: dict[str, Any]) -> float:
     return 128.0
 
 
-def write_trace_image(uvtt: Uvtt, directory: Path) -> tuple[Path, float]:
-    """Decode the export's render, shrink it and save it as a JPEG trace.
+def decoded_image(uvtt: Uvtt):
+    """The export's render at full size, loaded, as a PIL image.
 
-    Returns the file and the set_trace_image scale (woxels per pixel of the
-    saved image) that makes it cover the region exactly.
+    Pixel (0, 0) is the region's origin and one grid square is
+    `pixels_per_grid` pixels, so map woxels convert with ppg / 256.
     """
     from PIL import Image
 
     if uvtt.image_span is None:
-        raise UvttError(f"{uvtt.path.name} has no image to trace")
+        raise UvttError(f"{uvtt.path.name} has no image")
     start, end = uvtt.image_span
     with uvtt.path.open("rb") as stream:
         stream.seek(start)
@@ -439,19 +439,36 @@ def write_trace_image(uvtt: Uvtt, directory: Path) -> tuple[Path, float]:
         raise UvttError("the export's image is not valid base64") from exc
     del encoded
     previous = Image.MAX_IMAGE_PIXELS
-    # Our own cap replaces Pillow's, which warns at 89M pixels; a 52x52-tile
-    # export at 256 ppi is 177M.
     Image.MAX_IMAGE_PIXELS = TRACE_MAX_PIXELS
     try:
-        with Image.open(io.BytesIO(png)) as image:
+        image = Image.open(io.BytesIO(png))
+        width, height = image.size
+        if width * height > TRACE_MAX_PIXELS:
+            raise UvttError(
+                f"the export's image is {width}x{height}, too large to decode safely; "
+                "export it again at a lower pixels-per-grid"
+            )
+        image.load()
+        return image
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous
+
+
+def write_trace_image(uvtt: Uvtt, directory: Path) -> tuple[Path, float]:
+    """Decode the export's render, shrink it and save it as a JPEG trace.
+
+    Returns the file and the set_trace_image scale (woxels per pixel of the
+    saved image) that makes it cover the region exactly.
+    """
+    from PIL import Image
+
+    if uvtt.image_span is None:
+        raise UvttError(f"{uvtt.path.name} has no image to trace")
+    previous = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = TRACE_MAX_PIXELS
+    try:
+        with decoded_image(uvtt) as image:
             width, height = image.size
-            if width * height > TRACE_MAX_PIXELS:
-                raise UvttError(
-                    f"the export's image is {width}x{height}, too large to decode safely; "
-                    "export it again at a lower pixels-per-grid"
-                )
-            image.load()
-            del png
             # draft() is a no-op for PNG, so the whole image is decoded once.
             # Shrinking an RGBA image in one go makes a second full-size
             # premultiplied copy; a strip at a time copies only the strip.
