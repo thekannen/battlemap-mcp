@@ -29,6 +29,14 @@ Some steps depend on a mod's version, and run only on the versions they were che
 
 Build a whole map from a brief, plan an encounter together, furnish one room, export to or rebuild from a Universal VTT file, or hand off tedious placement. See [example prompts](https://knownframe.com/battlemap-mcp/docs/example-prompts/).
 
+## Videos
+
+- [Install it in five minutes](https://youtu.be/z4hD-ntjhGE) with the Claude desktop app
+- [Build a tavern](https://youtu.be/Okt4S9iLsyM), from a short brief to a lit map
+- [Design a two-floor magic shop](https://youtu.be/GflhKJFX9SI)
+
+More on the [Knownframe YouTube channel](https://www.youtube.com/@Knownframe).
+
 ## Get started
 
 You need **Dungeondraft 1.2.0.1** and an AI app that can run local MCP servers, on the same computer. Follow **[Get started](https://knownframe.com/battlemap-mcp/docs/get-started/)**, then the [Windows](https://knownframe.com/battlemap-mcp/docs/windows/), [macOS](https://knownframe.com/battlemap-mcp/docs/macos/) or [Linux](https://knownframe.com/battlemap-mcp/docs/linux/) guide. Downloads are on the [Releases](https://github.com/thekannen/battlemap-mcp/releases) page. Prefer to watch? The [setup video](https://youtu.be/z4hD-ntjhGE) installs everything with the Claude desktop app, start to finish.
