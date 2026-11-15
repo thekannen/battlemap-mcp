@@ -7,4 +7,5 @@ Contributor references in this folder:
 - [Developer installation](developer-installation.md)
 - [Bridge protocol](PROTOCOL.md)
 - [Build release packages](releases.md)
+- [Generated tagged asset packs](image-pack.md)
 - [Contributing](../CONTRIBUTING.md)

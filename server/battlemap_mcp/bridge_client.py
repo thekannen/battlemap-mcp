@@ -45,6 +45,7 @@ COMPANION_TOOLS = frozenset(
     {
         "arrange_objects",
         "clear_captures",
+        "create_image_pack",
         "crop_map",
         "export_dd2vtt",
         "get_export",
