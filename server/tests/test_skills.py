@@ -130,7 +130,7 @@ def test_art_direction_skill_has_a_coherent_visual_plan_contract():
     """The entry skill must require planning, discovery and screenshot review."""
     skill = REPOSITORY_ROOT / "skills" / "battlemap-art-direction" / "SKILL.md"
 
-    text = skill.read_text()
+    text = skill.read_text(encoding="utf-8")
 
     assert "../_shared/build-loop.md" in text
     assert "../_shared/style-bible.md" in text
@@ -155,7 +155,7 @@ def test_environment_skill_teaches_composition_without_a_fixed_clutter_quota():
     """Outdoor guidance must use relationships and visual checks, not object counts."""
     skill = REPOSITORY_ROOT / "skills" / "battlemap-environments" / "SKILL.md"
 
-    text = skill.read_text()
+    text = skill.read_text(encoding="utf-8")
 
     for requirement in (
         "terrain layering",
@@ -177,7 +177,7 @@ def test_interior_skill_centers_room_purpose_and_playable_circulation():
     """Indoor guidance must build a room hierarchy instead of uniform dressing."""
     skill = REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md"
 
-    text = skill.read_text()
+    text = skill.read_text(encoding="utf-8")
 
     for requirement in (
         "room purpose",
@@ -198,8 +198,8 @@ def test_visual_review_skill_requires_observable_repair_evidence():
     skill = REPOSITORY_ROOT / "skills" / "battlemap-visual-review" / "SKILL.md"
     rubric = REPOSITORY_ROOT / "skills" / "_shared" / "review-rubric.md"
 
-    text = skill.read_text()
-    rubric_text = rubric.read_text()
+    text = skill.read_text(encoding="utf-8")
+    rubric_text = rubric.read_text(encoding="utf-8")
 
     assert "../_shared/review-rubric.md" in text
     for requirement in ("export_map", "focused screenshot", "at most three", "undo", "finish"):
@@ -213,7 +213,7 @@ def test_composition_audit_skill_requires_two_scale_evidence_and_bounded_repairs
     """A final polish pass must compare observable map views, not add uniform detail."""
     skill = REPOSITORY_ROOT / "skills" / "battlemap-composition-audit" / "SKILL.md"
 
-    text = skill.read_text()
+    text = skill.read_text(encoding="utf-8")
 
     for requirement in (
         "get_composition_snapshot",
@@ -237,7 +237,7 @@ def test_material_language_skill_turns_a_brief_into_a_bounded_visual_system():
     """A coherent map needs intentional reuse, not an unbounded asset collage."""
     skill = REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md"
 
-    text = skill.read_text()
+    text = skill.read_text(encoding="utf-8")
 
     for requirement in (
         "material vocabulary",
@@ -260,7 +260,7 @@ def test_lighting_hierarchy_skill_treats_darkness_as_a_compositional_choice():
     """Atmosphere needs focused contrast, not uniform illumination."""
     skill = REPOSITORY_ROOT / "skills" / "battlemap-lighting-hierarchy" / "SKILL.md"
 
-    text = skill.read_text()
+    text = skill.read_text(encoding="utf-8")
 
     for requirement in (
         "ambient light",
@@ -291,7 +291,7 @@ def test_skills_require_coverage_hierarchy_semantics_and_scale_passes():
     material_language = REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md"
     lighting_hierarchy = REPOSITORY_ROOT / "skills" / "battlemap-lighting-hierarchy" / "SKILL.md"
 
-    style_text = style_bible.read_text()
+    style_text = style_bible.read_text(encoding="utf-8")
     assert "Coverage and emphasis" in style_text
     assert "Route states" in style_text
     # the build loop crafts region by region, so the plan has to name the regions
@@ -305,29 +305,31 @@ def test_skills_require_coverage_hierarchy_semantics_and_scale_passes():
         "one at a time",
         "screenshot",
     ):
-        assert requirement in build_loop.read_text()
-    assert build_loop.read_text().count("screenshot") >= 3
-    assert "Coverage and emphasis" in art_direction.read_text()
-    assert "open, blocked or gated" in art_direction.read_text()
-    assert "barriers, openings and lights" in environments.read_text()
-    assert "../_shared/build-loop.md" in environments.read_text()
-    assert "doors, barriers and lights" in interiors.read_text()
-    assert "../_shared/build-loop.md" in interiors.read_text()
+        assert requirement in build_loop.read_text(encoding="utf-8")
+    assert build_loop.read_text(encoding="utf-8").count("screenshot") >= 3
+    assert "Coverage and emphasis" in art_direction.read_text(encoding="utf-8")
+    assert "open, blocked or gated" in art_direction.read_text(encoding="utf-8")
+    assert "barriers, openings and lights" in environments.read_text(encoding="utf-8")
+    assert "../_shared/build-loop.md" in environments.read_text(encoding="utf-8")
+    assert "doors, barriers and lights" in interiors.read_text(encoding="utf-8")
+    assert "../_shared/build-loop.md" in interiors.read_text(encoding="utf-8")
     for skill in (art_direction, environments, interiors, visual_review):
-        assert "battlemap-composition-audit" in skill.read_text()
+        assert "battlemap-composition-audit" in skill.read_text(encoding="utf-8")
     for skill in (art_direction, environments, interiors):
-        assert "battlemap-material-language" in skill.read_text()
-        assert "battlemap-lighting-hierarchy" in skill.read_text()
-    assert "battlemap-composition-audit" in composition_audit.read_text()
-    assert "material vocabulary" in material_language.read_text()
-    assert "ambient light" in lighting_hierarchy.read_text()
+        assert "battlemap-material-language" in skill.read_text(encoding="utf-8")
+        assert "battlemap-lighting-hierarchy" in skill.read_text(encoding="utf-8")
+    assert "battlemap-composition-audit" in composition_audit.read_text(encoding="utf-8")
+    assert "material vocabulary" in material_language.read_text(encoding="utf-8")
+    assert "ambient light" in lighting_hierarchy.read_text(encoding="utf-8")
     for requirement in ("coverage", "barriers", "openings", "lighting"):
-        assert requirement in visual_review.read_text()
+        assert requirement in visual_review.read_text(encoding="utf-8")
 
 
 def test_interior_skill_teaches_layer_order_for_supported_objects():
     """A prop resting on furniture needs a layer above it, chosen at placement."""
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
 
     for requirement in ("place_object", "layer", "as you place it"):
         assert requirement in text
@@ -340,7 +342,9 @@ def test_interior_skill_teaches_layer_order_for_supported_objects():
 
 def test_interior_skill_covers_wall_junction_treatment():
     """Corner and T-junction seams read as an editing artifact unless masked."""
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
 
     lowered = text.lower()
     assert "junction" in lowered
@@ -354,7 +358,9 @@ def test_material_language_breaks_large_surfaces_without_adding_clutter():
     objects, which buries circulation while leaving the surface as flat as it
     was.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
 
     lowered = text.lower()
     assert "orientation" in lowered
@@ -366,7 +372,9 @@ def test_material_language_breaks_large_surfaces_without_adding_clutter():
 
 def test_composition_audit_protects_quiet_space_when_detail_is_added():
     """Composition guidance must not treat every unfilled region as a defect."""
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-composition-audit" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-composition-audit" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "quiet space" in lowered or "quiet ground" in lowered
@@ -378,7 +386,9 @@ def test_composition_audit_protects_quiet_space_when_detail_is_added():
 
 def test_lighting_skill_orders_ambient_before_sources_and_keeps_a_narrow_palette():
     """Ambient sets the global condition; sources are placed against it."""
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-lighting-hierarchy" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-lighting-hierarchy" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "before placing any source" in lowered
@@ -389,7 +399,7 @@ def test_lighting_skill_orders_ambient_before_sources_and_keeps_a_narrow_palette
 def test_skills_do_not_prescribe_a_global_object_shadow_policy():
     """Object shadows must remain a scene-specific style decision."""
     for path in (REPOSITORY_ROOT / "skills").rglob("*.md"):
-        lowered = path.read_text().lower()
+        lowered = path.read_text(encoding="utf-8").lower()
         for banned in (
             "turn off object shadows",
             "turn object shadows off",
@@ -402,7 +412,7 @@ def test_skills_do_not_prescribe_a_global_object_shadow_policy():
 
 def test_build_loop_sequences_by_region_not_by_feature():
     """Work is finished a region at a time, not swept globally per detail level."""
-    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
     lowered = text.lower()
 
     # framing a region is what makes a bounded unit of work verifiable
@@ -423,7 +433,7 @@ def test_build_loop_assigns_region_emphasis_before_crafting():
     each room carefully" produces uniformly busy maps — the same defect the
     composition audit exists to catch, arrived at from the opposite direction.
     """
-    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
     lowered = text.lower()
 
     assert "emphasis" in lowered
@@ -439,7 +449,7 @@ def test_build_loop_sets_the_ambient_condition_before_regions_are_judged():
     Ambient defines the condition every region screenshot is read against, so it
     belongs with the foundation; individual sources still come later.
     """
-    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
 
     assert "set_ambient_light" in text
     ambient_at = text.index("set_ambient_light")
@@ -455,7 +465,9 @@ def test_interiors_composes_functional_clusters_around_an_anchor():
     The fix is to name the zone's anchor, place it first, and position everything
     else relative to it.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "anchor" in lowered
@@ -469,7 +481,7 @@ def test_interiors_composes_functional_clusters_around_an_anchor():
 
 def test_build_loop_designs_circulation_before_furnishing_a_region():
     """Routes are designed first; furniture is placed around them, not vice versa."""
-    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
     lowered = text.lower()
 
     assert "circulation" in lowered
@@ -486,7 +498,7 @@ def test_region_emphasis_is_about_prominence_not_object_count():
     still be densely packed. Reading "quiet" as "few objects" produces a
     ceremonially sparse storeroom, which is its own kind of wrong.
     """
-    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
     lowered = text.lower()
 
     assert "prominence" in lowered or "visual competition" in lowered
@@ -499,7 +511,9 @@ def test_composition_audit_has_two_runnable_semantic_checks():
     One: if every floor were the same material, could the functional areas still
     be told apart? Two: describing each area's use without hedging.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-composition-audit" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-composition-audit" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "same material" in lowered or "one material" in lowered
@@ -508,7 +522,9 @@ def test_composition_audit_has_two_runnable_semantic_checks():
 
 def test_material_language_floor_supports_a_distinction_rather_than_creating_one():
     """A hard floor change with no wall, threshold or level change behind it reads as a diagram."""
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "threshold" in lowered
@@ -517,7 +533,9 @@ def test_material_language_floor_supports_a_distinction_rather_than_creating_one
 
 def test_environments_prefers_clusters_over_even_spacing():
     """Evenly spaced single shrubs read as stamped regardless of how few there are."""
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-environments" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-environments" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "cluster" in lowered
@@ -533,7 +551,7 @@ def test_build_loop_gates_furnishing_on_a_structural_check():
     invisible in element counts. The check is cheap and read-only, so it
     belongs as a gate at the end of the shell phase rather than as advice.
     """
-    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
     lowered = text.lower()
 
     assert "validate_floorplan" in text
@@ -553,7 +571,9 @@ def test_material_language_auditions_a_family_before_committing_to_it():
     CHOSEN — which is also the only moment cheap enough to be worth it, since a
     map commits to few families and repeats each many times.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "preview_assets" in text
@@ -571,7 +591,9 @@ def test_material_language_verifies_the_first_placement_before_repeating():
     the art, not how big the thing is against the room — so the first placement
     has to be checked in situ before the family is repeated.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     # distinctive phrases: an earlier version of this test passed on the words
@@ -586,7 +608,7 @@ def test_material_language_verifies_the_first_placement_before_repeating():
 
 def test_build_loop_says_why_a_checkpoint_matters():
     """Undo is bounded, so past a point a checkpoint is the only way back."""
-    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
     lowered = text.lower()
 
     assert "undo" in lowered
@@ -600,7 +622,9 @@ def test_composition_audit_warns_that_counts_do_not_cover_surfaces():
     reporting every count at zero was in fact covered in leftover tiling, and
     reading counts alone produced a confident wrong claim about it.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-composition-audit" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-composition-audit" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "counts" in lowered
@@ -616,7 +640,9 @@ def test_material_language_measures_an_asset_before_positioning_it():
     rather than a longer counter. fit_elements on a single id returns the real
     bounds, which is the only reliable way to know a footprint.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "fit_elements" in text
@@ -632,7 +658,9 @@ def test_interiors_checks_the_wall_before_placing_against_it():
     its own neighbour, and a window was buried behind a chimney breast — each
     time by checking the object in isolation and never its surroundings.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "window" in lowered
@@ -646,7 +674,9 @@ def test_interiors_requires_a_fixture_to_work_for_whoever_uses_it():
     A bar needs a side the server can stand on; a hearth that is the room's
     focal point needs visible fire, or it is a cold stone recess.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "silhouette" in lowered
@@ -662,7 +692,7 @@ def test_the_build_loop_gates_lighting_on_a_placement_check():
     the next build finds them the same way this one did — in a render, by eye,
     and only after the furniture is in.
     """
-    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
     lowered = text.lower()
 
     assert "validate_placements" in text
@@ -684,7 +714,9 @@ def test_lighting_requires_every_source_to_be_explainable():
     and outdoors the global condition (daylight, moonlight, overcast) is itself
     a source that has to be decided rather than assumed.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-lighting-hierarchy" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-lighting-hierarchy" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "source" in lowered
@@ -703,7 +735,9 @@ def test_environments_treats_a_building_as_having_a_site():
     where they come in, and where the work happens — otherwise no amount of
     ground texture makes it feel inhabited.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-environments" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-environments" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "site" in lowered
@@ -720,7 +754,7 @@ def test_the_build_loop_puts_ground_under_everything_before_objects():
     per-object, is what produces that; covering the whole surface first is what
     prevents it, and it costs one call.
     """
-    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
 
     assert "validate_scene" in text
     # Phase 2 has always said to fill the ground field, and that was not enough
@@ -739,7 +773,9 @@ def test_material_language_says_to_look_at_a_material_not_read_its_name():
     Chosen by name it read as a shadow across the bottom of the map and cost a
     round of revision; the contact sheet showed the problem in one look.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     # preview_assets was already recommended for shortlists before this rule
@@ -757,7 +793,9 @@ def test_material_language_fits_the_asset_to_the_space_it_goes_in():
     Measuring the asset is half of it. The other half is measuring the gap it
     has to sit in, which is what made four trees cover the building.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
     assert "space it has to sit in" in lowered or "measure the gap" in lowered
 
@@ -768,7 +806,9 @@ def test_interiors_gives_a_directional_fixture_a_facing():
     Placed unrotated on a south wall, the sconce hung through the wall and lit
     the road instead of the entry hall.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
     assert "facing" in lowered
     assert "unrotated" in lowered or "rotation 0" in lowered
@@ -781,7 +821,7 @@ def test_the_build_loop_confirms_a_checkpoint_rather_than_trusting_the_call():
     request nobody confirmed. The loop has to say how to tell a real checkpoint
     from a request for one, and what to do when it is not one.
     """
-    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
     prose = " ".join(text.split()).lower()  # the rule may wrap anywhere
     assert "saves_seen" in text
     assert "save_warning" in text
@@ -790,7 +830,7 @@ def test_the_build_loop_confirms_a_checkpoint_rather_than_trusting_the_call():
 
 def _prose(path):
     """Skill text with wrapping normalised, so a rule may be re-wrapped freely."""
-    return " ".join((REPOSITORY_ROOT / path).read_text().split())
+    return " ".join((REPOSITORY_ROOT / path).read_text(encoding="utf-8").split())
 
 
 def test_the_build_loop_caps_wall_junctions_above_the_walls():
@@ -804,7 +844,7 @@ def test_the_build_loop_caps_wall_junctions_above_the_walls():
     assert "layer 700 up" in prose or "layer=700" in prose
     assert "pillar_wood" in prose
     # it belongs to shell work, before the regions are dressed
-    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
     assert text.index("layer=700") < text.index("## 4. Assign region emphasis")
 
 
@@ -878,7 +918,7 @@ def test_the_build_loop_asks_before_building_when_the_brief_is_open():
     assert "never which table asset to use" in prose
     assert "style bible" in prose
     # it belongs in planning, before the foundation goes down
-    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
     assert text.index("at most five questions") < text.index("## 2. Lay the foundation")
 
 
@@ -896,7 +936,7 @@ def test_the_build_loop_checks_which_asset_packs_the_map_includes():
     assert "installed_but_not_in_this_map" in prose
     assert "prepare_map_with_packs" in prose
     # it belongs in preflight, before anything is placed
-    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
     assert text.index("list_asset_packs") < text.index("## 2. Lay the foundation")
 
 
@@ -983,7 +1023,7 @@ def test_the_public_skills_make_no_claims_about_which_assets_are_installed():
     )
     offenders = []
     for path in sorted((REPOSITORY_ROOT / "skills").rglob("*.md")):
-        for number, line in enumerate(path.read_text().splitlines(), 1):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             found = banned.search(line)
             if found:
                 rel = path.relative_to(REPOSITORY_ROOT)
@@ -1178,9 +1218,13 @@ def test_a_map_commits_to_one_art_family_and_counts_strays():
     prefabs as well as objects, and it is checked by counting assets per pack,
     which a path already tells you.
     """
-    style = (REPOSITORY_ROOT / "skills" / "_shared" / "style-bible.md").read_text()
-    material = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text()
-    art = (REPOSITORY_ROOT / "skills" / "battlemap-art-direction" / "SKILL.md").read_text()
+    style = (REPOSITORY_ROOT / "skills" / "_shared" / "style-bible.md").read_text(encoding="utf-8")
+    material = (REPOSITORY_ROOT / "skills" / "battlemap-material-language" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    art = (REPOSITORY_ROOT / "skills" / "battlemap-art-direction" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = material.lower()
 
     assert "Art family" in style and "Art family" in art
@@ -1201,7 +1245,9 @@ def test_interiors_places_kits_whole_and_dressing_inside_its_surface():
     Each passes the footprint checks, so the skill has to name the rule and,
     where one exists, the validator list that reports it.
     """
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-interiors" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "some fixtures are kits" in lowered
@@ -1224,7 +1270,9 @@ def test_interiors_places_kits_whole_and_dressing_inside_its_surface():
 
 def test_environments_covers_the_street_planting_register_weathering_and_water():
     """A site is more than the yard inside its wall, and ground records its weather."""
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-environments" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-environments" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "street is a region" in lowered
@@ -1242,7 +1290,9 @@ def test_environments_covers_the_street_planting_register_weathering_and_water()
 
 def test_lighting_treats_lived_in_as_a_distribution_with_named_dark_rooms():
     """Warm light where people are, deliberate darkness where they are not."""
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-lighting-hierarchy" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-lighting-hierarchy" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
 
     assert "lived in" in lowered and "distribution" in lowered
@@ -1253,8 +1303,10 @@ def test_lighting_treats_lived_in_as_a_distribution_with_named_dark_rooms():
 
 def test_build_loop_reviews_rooms_at_token_zoom_and_checks_taste_early():
     """Placement defects hide at map scale; a style mismatch found late costs every region."""
-    loop = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
-    review = (REPOSITORY_ROOT / "skills" / "battlemap-visual-review" / "SKILL.md").read_text()
+    loop = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
+    review = (REPOSITORY_ROOT / "skills" / "battlemap-visual-review" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     lowered = loop.lower()
 
     assert "token zoom, object by object" in lowered
@@ -1270,7 +1322,9 @@ def test_build_loop_reviews_rooms_at_token_zoom_and_checks_taste_early():
 
 def test_vtt_rebuild_imports_structure_and_rebuilds_art_by_eye():
     """Runtime behavior and validation."""
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-vtt-rebuild" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-vtt-rebuild" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     # Packs are fixed at map creation, so they are chosen before the import.
     assert text.index("prepare_map_with_packs") < text.index("confirm=true")
     assert "no door/window field" in text and "vtt_reversed_portals" in text
@@ -1289,7 +1343,9 @@ def test_vtt_rebuild_imports_structure_and_rebuilds_art_by_eye():
 
 def test_vtt_rebuild_makes_a_faithful_copy_the_default():
     """Runtime behavior and validation."""
-    text = (REPOSITORY_ROOT / "skills" / "battlemap-vtt-rebuild" / "SKILL.md").read_text()
+    text = (REPOSITORY_ROOT / "skills" / "battlemap-vtt-rebuild" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     flat = " ".join(text.split())
     # 1. Full resolution, by grid lines, which survive a client's scaling.
     assert "Measure at full size, never from a shrunken view" in flat
@@ -1316,6 +1372,6 @@ def test_vtt_rebuild_makes_a_faithful_copy_the_default():
 
 def test_the_build_loop_says_which_way_closed_goes():
     """Runtime behavior and validation."""
-    loop = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text()
+    loop = (REPOSITORY_ROOT / "skills" / "_shared" / "build-loop.md").read_text(encoding="utf-8")
     assert "Leave its `closed`\nunset" in loop
     assert "openable door" in loop
