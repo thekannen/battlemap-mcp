@@ -34,6 +34,7 @@ Build a whole map from a brief, plan an encounter together, furnish one room, ex
 - [Install it in five minutes](https://youtu.be/z4hD-ntjhGE) with the Claude desktop app
 - [Build a tavern](https://youtu.be/Okt4S9iLsyM), from a short brief to a lit map
 - [Design a two-floor magic shop](https://youtu.be/GflhKJFX9SI)
+- [Build a harvest feast hall](https://youtu.be/kTVf01AOqyg) that turns into an ambush
 
 More on the [Knownframe YouTube channel](https://www.youtube.com/@Knownframe).
 
