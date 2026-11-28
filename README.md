@@ -32,11 +32,13 @@ Build a whole map from a brief, plan an encounter together, furnish one room, ex
 ## Videos
 
 - [Install it in five minutes](https://youtu.be/z4hD-ntjhGE) with the Claude desktop app
+- [Two ways to update](https://youtu.be/n8eLsJLZQKY): by hand, or by asking Claude Code
 - [Build a tavern](https://youtu.be/Okt4S9iLsyM), from a short brief to a lit map
 - [Design a two-floor magic shop](https://youtu.be/GflhKJFX9SI)
-- [Build a harvest feast hall](https://youtu.be/kTVf01AOqyg) that turns into an ambush
+- [Build a harvest feast hall](https://youtu.be/kTVf01AOqyg) that turns into an ambush, with default assets and asset packs side by side
+- [Rebuild a map from only its VTT file](https://youtu.be/W38H3SL1HJo)
 
-More on the [Knownframe YouTube channel](https://www.youtube.com/@Knownframe).
+All of them, plus Shorts: [knownframe.com/battlemap-mcp/videos](https://knownframe.com/battlemap-mcp/videos/) · [the YouTube playlist](https://www.youtube.com/playlist?list=PLLvJUovZmqhw).
 
 ## Get started
 
